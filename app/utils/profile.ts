@@ -1,11 +1,10 @@
 const API_BASE = "https://anime-api-one-cyan.vercel.app/api";
 
-// 1. Define the TypeScript structure for what a Profile contains
 export interface RecentEpisode {
   animeTitle: string;
   episodeNum: string | number;
   time?: string;
-  [key: string]: any; // Allows flexibility for any extra properties you already track
+  [key: string]: any;
 }
 
 export interface UserProfile {
@@ -14,33 +13,38 @@ export interface UserProfile {
   recentEpisodes: RecentEpisode[];
 }
 
-// Define the shape of your backend's standard JSON response
-interface ApiResponse<T> {
+interface ApiResponse {
   success: boolean;
-  results?: T;
+  results?: UserProfile;
   message?: string;
 }
 
-// 2. Fetch data from MongoDB with explicit TS typing
 export const loadProfile = async (username: string): Promise<UserProfile | null> => {
   try {
-    const response = await fetch(`${API_BASE}/profile/${username}`);
-    const data: ApiResponse<UserProfile> = await response.json();
+    // Force a fresh request without caching to prevent old data loops
+    const response = await fetch(`${API_BASE}/profile/${username}`, {
+      cache: "no-store"
+    });
     
+    if (!response.ok) {
+      console.error(`Backend returned server error status: ${response.status}`);
+      return null;
+    }
+    
+    const data: ApiResponse = await response.json();
     if (data.success && data.results) {
-      return data.results; 
+      return data.results;
     }
     return null;
   } catch (error) {
-    console.error("Error loading cloud profile:", error);
+    console.error("Error connecting to cloud profile api:", error);
     return null;
   }
 };
 
-// 3. Save data back to MongoDB with explicit TS typing
 export const saveProfile = async (
-  username: string, 
-  preferredServer: string, 
+  username: string,
+  preferredServer: string,
   recentEpisodes: RecentEpisode[]
 ): Promise<boolean> => {
   try {
@@ -49,7 +53,7 @@ export const saveProfile = async (
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ username, preferredServer, recentEpisodes })
     });
-    const data: ApiResponse<UserProfile> = await response.json();
+    const data: ApiResponse = await response.json();
     return data.success;
   } catch (error) {
     console.error("Error saving cloud profile:", error);
