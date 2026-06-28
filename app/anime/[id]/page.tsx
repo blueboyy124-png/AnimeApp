@@ -361,7 +361,7 @@ export default function AnimeDetailPage({ params }: PageProps) {
                       >
                         <div className="w-1/3 h-full shrink-0 relative bg-neutral-900 border-r border-neutral-900 overflow-hidden select-none">
                           <img 
-                            src={ep.image || info.bannerImage || info.coverImage?.large || "https://placehold.co/300x180?text=Episode+Preview"} 
+                            src={ep.image || (info as any).bannerImage || (info as any).banner || info.coverImage?.large || "https://placehold.co/300x180?text=Episode+Preview"} 
                             alt={`Episode ${ep.number} Grid Capture`}
                             className="w-full h-full object-cover object-center transition duration-500 group-hover:scale-102"
                           />

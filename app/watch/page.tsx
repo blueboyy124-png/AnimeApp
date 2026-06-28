@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useState, useRef, useCallback } from "react";
+import { Suspense } from 'react';
 import { useSearchParams, useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
 
@@ -36,7 +37,7 @@ function extractEpisodeLists(epData: any, provider: string) {
   };
 }
 
-export default function WatchPage() {
+function WatchContent() {
   const searchParams = useSearchParams();
   const router       = useRouter();
   const pathname     = usePathname();
@@ -704,7 +705,7 @@ export default function WatchPage() {
             maxMaxBufferLength:       60,
             backBufferLength:         30,
             maxBufferHole:            0.8,
-            nudgeMaxRetries:          5,
+            nudgeMaxRetry:          5,
             fragLoadingTimeOut:       20000,
             fragLoadingMaxRetry:      4,
           });
@@ -1336,5 +1337,17 @@ export default function WatchPage() {
 
       </div>
     </main>
+  );
+}
+
+export default function WatchPage() {
+  return (
+    <Suspense fallback={
+      <div className="flex h-screen w-screen items-center justify-center bg-black text-white">
+        Loading Player...
+      </div>
+    }>
+      <WatchContent />
+    </Suspense>
   );
 }
