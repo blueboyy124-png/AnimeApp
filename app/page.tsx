@@ -233,15 +233,17 @@ export default function HomePage() {
     <main className="min-h-screen bg-neutral-950 text-neutral-100 font-sans antialiased selection:bg-orange-500 selection:text-white pb-20 overflow-x-hidden">
       
       {/* GLOBAL NAVIGATION HEADER */}
-      <header className="fixed top-0 inset-x-0 h-16 bg-gradient-to-b from-black/90 to-transparent backdrop-blur-md z-50 flex items-center justify-between px-6 md:px-12 border-b border-neutral-900/40">
-        <div className="flex items-center space-x-12">
+      <header className="fixed top-0 inset-x-0 h-16 bg-black/80 backdrop-blur-md z-50 flex items-center justify-between px-4 sm:px-6 md:px-12 border-b border-neutral-900/40">
+        <div className="flex items-center space-x-4 md:space-x-12 min-w-0">
           <button 
             onClick={() => { setActiveCategory("trending"); setSearchQuery(""); }} 
-            className="text-2xl font-black tracking-tighter text-orange-500 hover:opacity-90 transition text-left cursor-pointer"
+            className="text-xl md:text-2xl font-black tracking-tighter text-orange-500 hover:opacity-90 transition text-left cursor-pointer flex-shrink-0"
           >
             STREAMANIME
           </button>
-          <nav className="hidden md:flex items-center space-x-8 text-sm font-medium text-neutral-400">
+          
+          {/* Hide navigation paths on small viewport frames (Will handle mobile navigation shelf next) */}
+          <nav className="hidden lg:flex items-center space-x-6 xl:space-x-8 text-sm font-medium text-neutral-400 flex-shrink-0">
             <button 
               onClick={() => { setActiveCategory("trending"); setSearchQuery(""); }} 
               className={`transition cursor-pointer ${activeCategory === "trending" && !isSearching ? "text-neutral-100 font-bold" : "hover:text-neutral-300"}`}
@@ -270,9 +272,9 @@ export default function HomePage() {
         </div>
 
         {/* CONTROLS AREA: SEARCH DECK + PROFILE SYNCHRONIZATION */}
-        <div className="flex items-center space-x-4 ml-auto">
-          {/* SEARCH DECK INPUT FRAME */}
-          <div className="relative max-w-xs w-48 lg:w-64 hidden sm:block">
+        <div className="flex items-center space-x-2 sm:space-x-4 flex-shrink-0">
+          {/* SEARCH DECK INPUT FRAME - Only visible on wider displays, falls back to a full bar below on mobile */}
+          <div className="relative max-w-xs w-40 md:w-48 lg:w-64 hidden sm:block">
             <div className="absolute inset-y-0 left-3 flex items-center pointer-events-none">
               <img 
                 src="/Assets/search-icon.png" 
@@ -282,7 +284,7 @@ export default function HomePage() {
             </div>
             <input
               type="text"
-              placeholder="Search titles, genres..."
+              placeholder="Search titles..."
               value={searchQuery}
               onChange={handleSearchChange}
               className="w-full pl-10 pr-4 py-1.5 rounded-md bg-neutral-900/90 border border-neutral-800 text-sm placeholder-neutral-500 focus:outline-none focus:border-orange-500 focus:bg-neutral-900 transition duration-200"
@@ -294,9 +296,37 @@ export default function HomePage() {
         </div>
       </header>
 
+      {/* MOBILE CATEGORY SELECTOR NAVIGATION BAR */}
+      <div className="lg:hidden fixed bottom-0 inset-x-0 h-14 bg-neutral-950/95 backdrop-blur-md border-t border-neutral-900/60 z-50 flex items-center justify-around text-[11px] font-medium text-neutral-400 px-2">
+        <button 
+          onClick={() => { setActiveCategory("trending"); setSearchQuery(""); window.scrollTo({ top: 0, behavior: 'smooth' }); }} 
+          className={`flex flex-col items-center space-y-0.5 ${activeCategory === "trending" && !isSearching ? "text-orange-500 font-bold" : ""}`}
+        >
+          <span>Home</span>
+        </button>
+        <button 
+          onClick={() => { setActiveCategory("upcoming"); setSearchQuery(""); window.scrollTo({ top: 0, behavior: 'smooth' }); }} 
+          className={`flex flex-col items-center space-y-0.5 ${activeCategory === "upcoming" && !isSearching ? "text-orange-500 font-bold" : ""}`}
+        >
+          <span>Upcoming</span>
+        </button>
+        <button 
+          onClick={() => { setActiveCategory("recommendations"); setSearchQuery(""); window.scrollTo({ top: 0, behavior: 'smooth' }); }} 
+          className={`flex flex-col items-center space-y-0.5 ${activeCategory === "recommendations" && !isSearching ? "text-orange-500 font-bold" : ""}`}
+        >
+          <span>Suggested</span>
+        </button>
+        <button 
+          onClick={() => { setActiveCategory("popular"); setSearchQuery(""); window.scrollTo({ top: 0, behavior: 'smooth' }); }} 
+          className={`flex flex-col items-center space-y-0.5 ${activeCategory === "popular" && !isSearching ? "text-orange-500 font-bold" : ""}`}
+        >
+          <span>Popular</span>
+        </button>
+      </div>
+
       {/* NETFLIX-STYLE FULL-WIDTH SPOTLIGHT SLIDER (TOP 1-5 ROTATOR) */}
       {!isSearching && topFiveTrending.length > 0 && (
-        <section className="relative w-full h-[75vh] md:h-[85vh] bg-black overflow-hidden pt-16">
+        <section className="relative w-full h-[60vh] sm:h-[75vh] md:h-[85vh] bg-black overflow-hidden pt-16">
           
           <div 
             className="w-full h-full flex transition-transform duration-700 ease-in-out"
@@ -316,33 +346,33 @@ export default function HomePage() {
                 <div className="absolute inset-0 bg-gradient-to-t from-neutral-950 via-neutral-950/30 to-transparent" />
                 <div className="absolute inset-0 bg-gradient-to-r from-neutral-950 via-transparent to-transparent" />
 
-                <div className="absolute inset-x-0 bottom-0 p-8 md:p-16 space-y-4 z-10 max-w-3xl">
+                <div className="absolute inset-x-0 bottom-0 p-4 sm:p-8 md:p-16 space-y-3 md:space-y-4 z-10 max-w-3xl">
                   <div className="flex items-center space-x-3.5">
-                    <span className="text-5xl md:text-6xl font-black text-orange-500 tracking-tighter italic select-none">
+                    <span className="text-4xl md:text-6xl font-black text-orange-500 tracking-tighter italic select-none">
                       #{index + 1}
                     </span>
-                    <span className="text-[10px] font-bold tracking-widest text-neutral-200 uppercase bg-neutral-900/90 px-2.5 py-0.5 rounded border border-neutral-800">
-                      Trending Spotlight
+                    <span className="text-[9px] md:text-[10px] font-bold tracking-widest text-neutral-200 uppercase bg-neutral-900/90 px-2.5 py-0.5 rounded border border-neutral-800">
+                      Spotlight
                     </span>
                   </div>
 
-                  <h2 className="text-3xl md:text-5xl font-extrabold tracking-tight text-white leading-tight drop-shadow-md line-clamp-2">
+                  <h2 className="text-xl sm:text-3xl md:text-5xl font-extrabold tracking-tight text-white leading-tight drop-shadow-md line-clamp-2">
                     {show.title?.english || show.title?.romaji}
                   </h2>
                   
-                  <p className="text-xs md:text-sm text-neutral-300 max-w-xl line-clamp-3 leading-relaxed drop-shadow">
+                  <p className="text-[11px] md:text-sm text-neutral-300 max-w-xl line-clamp-2 sm:line-clamp-3 leading-relaxed drop-shadow">
                     {cleanDescription(show.description)}
                   </p>
 
-                  <div className="flex items-center space-x-3 pt-3">
+                  <div className="flex items-center space-x-3 pt-1 md:pt-3">
                     <Link 
                       href={`/anime/${show.id}`}
-                      className="bg-orange-500 hover:bg-orange-600 text-white font-semibold text-xs md:text-sm px-5 py-3 rounded transition-all flex items-center space-x-2.5 active:scale-95 shadow-lg"
+                      className="bg-orange-500 hover:bg-orange-600 text-white font-semibold text-xs md:text-sm px-4 py-2 md:px-5 md:py-3 rounded transition-all flex items-center space-x-2 active:scale-95 shadow-lg"
                     >
                       <img 
                         src="/Assets/play-button.png" 
                         alt="Play" 
-                        className="w-4 h-4 md:w-5 md:h-5 object-contain brightness-200"
+                        className="w-3.5 h-3.5 md:w-5 md:h-5 object-contain brightness-200"
                       />
                       <span>Watch Now</span>
                     </Link>
@@ -352,7 +382,7 @@ export default function HomePage() {
             ))}
           </div>
 
-          <div className="absolute bottom-6 right-8 z-20 flex items-center space-x-2">
+          <div className="absolute bottom-6 right-4 sm:right-8 z-20 flex items-center space-x-2">
             {topFiveTrending.map((_, dotIdx) => (
               <button
                 key={dotIdx}
@@ -369,9 +399,9 @@ export default function HomePage() {
       )}
 
       {/* COMPONENT BODY TRACK LISTINGS */}
-      <div className={`px-6 md:px-12 space-y-12 ${!isSearching && topFiveTrending.length > 0 ? "mt-12 relative z-20" : "pt-24"}`}>
+      <div className={`px-4 sm:px-6 md:px-12 space-y-10 md:space-y-12 ${!isSearching && topFiveTrending.length > 0 ? "mt-6 md:mt-12 relative z-20" : "pt-20 md:pt-24"}`}>
         
-        {/* Mobile Input Container */}
+        {/* Mobile Input Container - visible cleanly on small viewports */}
         <div className="sm:hidden block relative">
           <div className="absolute inset-y-0 left-3 flex items-center pointer-events-none">
             <img 
@@ -385,7 +415,7 @@ export default function HomePage() {
             placeholder="Search anime..."
             value={searchQuery}
             onChange={handleSearchChange}
-            className="w-full pl-10 pr-4 p-3 rounded-lg bg-neutral-900 border border-neutral-800 text-white text-sm focus:outline-none focus:border-orange-500"
+            className="w-full pl-10 pr-4 p-2.5 rounded-lg bg-neutral-900 border border-neutral-800 text-white text-sm focus:outline-none focus:border-orange-500"
           />
         </div>
 
@@ -393,7 +423,7 @@ export default function HomePage() {
         {!isSearching && watchHistory.length > 0 && (
           <section className="space-y-4">
             <div className="flex items-center justify-between border-b border-neutral-900 pb-3">
-              <h3 className="text-base md:text-lg font-black uppercase tracking-widest text-orange-500">
+              <h3 className="text-sm md:text-lg font-black uppercase tracking-widest text-orange-500">
                 Watch History
               </h3>
               <button 
@@ -434,7 +464,7 @@ export default function HomePage() {
                     </div>
 
                     {/* SPEC: MINI PROGRESS TRACK SLIDER ANCHORED ON BOTTOM EDGE */}
-                    <div className="absolute bottom-0 inset-x-0 h-1 bg-neutral-800 z-30">
+                    <div className="absolute bottom-0 inset-x-0 h-1 bg-orange-500/20 z-30">
                       <div 
                         className="h-full bg-orange-500 transition-all duration-300" 
                         style={{ width: `${item.progressPercent}%` }}
@@ -443,7 +473,7 @@ export default function HomePage() {
                   </div>
 
                   {/* CAPTION INFO PANEL */}
-                  <div className="p-3 bg-neutral-900/10 flex-1 flex flex-col justify-center">
+                  <div className="p-2.5 bg-neutral-900/10 flex-1 flex flex-col justify-center">
                     <h4 className="font-bold text-xs text-neutral-200 truncate group-hover:text-orange-500 transition duration-200">
                       {item.animeTitle}
                     </h4>
@@ -455,20 +485,20 @@ export default function HomePage() {
         )}
 
         {/* SECTION FEED SEPARATOR */}
-        <section className="space-y-6">
+        <section className="space-y-4 md:space-y-6">
           <div className="flex items-center justify-between border-b border-neutral-900 pb-3">
-            <h3 className="text-base md:text-lg font-bold uppercase tracking-widest text-neutral-200">
+            <h3 className="text-sm md:text-lg font-bold uppercase tracking-widest text-neutral-200">
               {getHeaderTitle()}
             </h3>
             {!isSearching && (
-              <span className="text-[11px] text-neutral-600 font-mono">
-                {standardShowcaseList.length} titles synchronized
+              <span className="text-[10px] md:text-[11px] text-neutral-600 font-mono">
+                {standardShowcaseList.length} titles
               </span>
             )}
           </div>
           
           {/* CARDS DISPLAY ROW GRID */}
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-x-4 gap-y-8">
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-x-3 gap-y-6 md:gap-x-4 md:gap-y-8">
             {(loading || (searchingLoading && searchPage === 1)) ? (
               <div className="col-span-full py-20 flex flex-col items-center justify-center space-y-3">
                 <div className="w-5 h-5 border-2 border-orange-500 border-t-transparent rounded-full animate-spin" />
@@ -481,7 +511,7 @@ export default function HomePage() {
                 <Link 
                   href={`/anime/${anime.id}`} 
                   key={anime.id} 
-                  className="group flex flex-col space-y-2.5 outline-none"
+                  className="group flex flex-col space-y-2 outline-none"
                 >
                   <div className="relative aspect-[2/3] w-full overflow-hidden rounded bg-neutral-900 shadow-md border border-neutral-900 group-hover:border-neutral-700 group-focus:border-orange-500 transition-all duration-300">
                     <img 
@@ -492,11 +522,11 @@ export default function HomePage() {
                     />
                     
                     <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-center justify-center">
-                      <div className="bg-orange-500/95 p-3 rounded-full scale-90 group-hover:scale-100 transition-transform duration-300 shadow-xl">
+                      <div className="bg-orange-500/95 p-2.5 rounded-full scale-90 group-hover:scale-100 transition-transform duration-300 shadow-xl">
                         <img 
                           src="/Assets/play-button.png" 
                           alt="Play" 
-                          className="w-5 h-5 object-contain brightness-200"
+                          className="w-4 h-4 object-contain brightness-200"
                         />
                       </div>
                     </div>
@@ -506,7 +536,7 @@ export default function HomePage() {
                     <h4 className="font-semibold text-xs md:text-sm leading-tight line-clamp-2 text-neutral-300 group-hover:text-orange-500 transition duration-200">
                       {anime.title?.english || anime.title?.romaji || "Untitled Show"}
                     </h4>
-                    <div className="text-[10px] font-mono text-neutral-600 tracking-tight font-medium uppercase">
+                    <div className="text-[9px] md:text-[10px] font-mono text-neutral-600 tracking-tight font-medium uppercase">
                       Premium Feed
                     </div>
                   </div>
@@ -527,11 +557,11 @@ export default function HomePage() {
 
         {/* PAGINATION PROGRESSIVE INTERACTION LAYER */}
         {isSearching && hasMoreResults && searchResults.length >= RESULTS_PER_PAGE && (
-          <div className="w-full pt-10 flex justify-center">
+          <div className="w-full pt-6 flex justify-center">
             <button
               onClick={handleLoadMoreSearch}
               disabled={searchingLoading}
-              className="px-8 py-3 rounded bg-neutral-900 border border-neutral-800 hover:border-neutral-700 hover:bg-neutral-850 font-medium text-xs font-mono tracking-wider text-neutral-300 uppercase transition disabled:opacity-50 flex items-center space-x-3"
+              className="px-6 py-2.5 rounded bg-neutral-900 border border-neutral-800 hover:border-neutral-700 hover:bg-neutral-850 font-medium text-xs font-mono tracking-wider text-neutral-300 uppercase transition disabled:opacity-50 flex items-center space-x-3"
             >
               {searchingLoading && (
                 <div className="w-3 h-3 border border-neutral-400 border-t-transparent rounded-full animate-spin" />
