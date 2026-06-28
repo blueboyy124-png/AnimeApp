@@ -189,7 +189,7 @@ function WatchContent() {
     setShowControls(true);
     if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
     if (isPlaying) {
-      controlsTimeoutRef.current = setTimeout(() => setShowControls(false), 3000);
+      controlsTimeoutRef.current = setTimeout(() => setShowControls(false), 3500);
     }
   }, [isPlaying]);
 
@@ -236,6 +236,12 @@ function WatchContent() {
     triggerControlsActivity();
   };
 
+  const skipSeconds = (amount: number) => {
+    if (!videoRef.current) return;
+    videoRef.current.currentTime = Math.max(0, Math.min(videoRef.current.duration || 0, videoRef.current.currentTime + amount));
+    triggerControlsActivity();
+  };
+
   const handleScrub = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!videoRef.current) return;
     const t = parseFloat(e.target.value);
@@ -261,35 +267,36 @@ function WatchContent() {
   };
 
   const toggleFullscreen = () => {
-    if (!playerContainerRef.current || !videoRef.current) return;
+    const container = playerContainerRef.current;
+    if (!container) return;
 
-    const nativeVideo: any = videoRef.current;
-    const container: any = playerContainerRef.current;
+    const requestFS = container.requestFullscreen || (container as any).webkitRequestFullscreen;
+    const exitFS = document.exitFullscreen || (document as any).webkitExitFullscreen;
+    const activeFSElement = document.fullscreenElement || (document as any).webkitFullscreenElement;
 
-    if (!document.fullscreenElement && !(document as any).webkitFullscreenElement) {
-      if (container.requestFullscreen) {
-        container.requestFullscreen().then(() => setIsFullscreen(true)).catch(() => {});
-      } else if (container.webkitRequestFullscreen) {
-        container.webkitRequestFullscreen();
-        setIsFullscreen(true);
-      } else if (nativeVideo.webkitEnterFullscreen) {
-        nativeVideo.webkitEnterFullscreen();
-        setIsFullscreen(true);
-      }
-    } else {
-      if (document.exitFullscreen) {
-        document.exitFullscreen().then(() => setIsFullscreen(false));
-      } else if ((document as any).webkitExitFullscreen) {
-        (document as any).webkitExitFullscreen();
+    if (requestFS) {
+      if (!activeFSElement) {
+        requestFS.call(container)
+          .then(() => setIsFullscreen(true))
+          .catch(() => {
+            setIsFullscreen(!isFullscreen);
+          });
+      } else {
+        exitFS.call(document);
         setIsFullscreen(false);
       }
+    } else {
+      setIsFullscreen(!isFullscreen);
     }
+    triggerControlsActivity();
   };
 
   useEffect(() => {
     const syncFullscreenState = () => {
-      const isCurrentlyFull = !!(document.fullscreenElement || (document as any).webkitFullscreenElement);
-      setIsFullscreen(isCurrentlyFull);
+      const isCurrentlyFull = !!(document.fullscreenElement || (document.fullscreenElement as any));
+      if (document.fullscreenEnabled || (document as any).webkitFullscreenEnabled) {
+        setIsFullscreen(isCurrentlyFull);
+      }
     };
     document.addEventListener("fullscreenchange", syncFullscreenState);
     document.addEventListener("webkitfullscreenchange", syncFullscreenState);
@@ -906,7 +913,7 @@ function WatchContent() {
         `}} />
       )}
 
-      {/* EXPANDED MOBILE INVISIBLE CLICK-RADIUS ENGINES via pseudo-elements */}
+      {/* RE-ENGINEERED COMPACT PREMIUM STYLING RULES */}
       <style dangerouslySetInnerHTML={{__html: `
         @keyframes netflixCountdown {
           0% { width: 0%; }
@@ -923,7 +930,7 @@ function WatchContent() {
           background: transparent !important;
         }
         
-        /* Expand tap targets cleanly on small touch targets to 44x44px minimum without styling change */
+        /* 48x48px Clean Interactive Mobile Touch Box Extension */
         .mobile-expand-hitbox {
           position: relative;
         }
@@ -933,11 +940,25 @@ function WatchContent() {
           top: 50%;
           left: 50%;
           transform: translate(-50%, -50%);
-          min-width: 44px;
-          min-height: 44px;
-          width: 150%;
-          height: 150%;
+          min-width: 48px;
+          min-height: 48px;
+          width: 140%;
+          height: 140%;
           cursor: pointer;
+        }
+
+        .custom-sandbox-fullscreen {
+          position: fixed !important;
+          top: 0 !important;
+          left: 0 !important;
+          right: 0 !important;
+          bottom: 0 !important;
+          width: 100vw !important;
+          height: 100vh !important;
+          z-index: 99999 !important;
+          border-radius: 0px !important;
+          margin: 0px !important;
+          background: #000000 !important;
         }
       `}} />
 
@@ -999,11 +1020,14 @@ function WatchContent() {
           <span className="text-xs font-mono text-white font-bold truncate max-w-md">{animeTitle}</span>
         </div>
 
+        {/* INTEGRATED THEATRE VIEWPORT SYSTEM */}
         <div
           ref={playerContainerRef}
           onMouseMove={triggerControlsActivity}
           onTouchStart={triggerControlsActivity}
-          className="relative w-full aspect-video bg-black rounded-xl overflow-hidden border border-neutral-800/60 group shadow-[0_0_50px_rgba(0,0,0,0.8)] transition-all duration-300 ring-1 ring-white/5 select-none"
+          className={`relative w-full aspect-video bg-black rounded-xl overflow-hidden border border-neutral-800/60 group shadow-[0_0_50px_rgba(0,0,0,0.8)] transition-all duration-300 ring-1 ring-white/5 select-none ${
+            isFullscreen ? "custom-sandbox-fullscreen" : ""
+          }`}
         >
           {loading && (
             <div className="absolute inset-0 flex flex-col items-center justify-center bg-neutral-950/95 z-40 space-y-4">
@@ -1040,31 +1064,134 @@ function WatchContent() {
             onEnded={navigateToNextEpisode}
             controls={false}
             playsInline
+            webkit-playsinline="true"
             className="w-full h-full object-contain cursor-pointer bg-black"
           />
 
+          {/* PREMIUM TOP HUD OVERLAY PANEL (Title + New Audio Tracks & Volumetric Slider) */}
           <div 
-            className={`absolute top-0 inset-x-0 bg-gradient-to-b from-black/80 via-black/40 to-transparent p-6 pb-12 z-30 transition-all duration-300 pointer-events-none ${
-              showControls ? "opacity-100 translate-y-0" : "opacity-0 -translate-y-2"
+            className={`absolute top-0 inset-x-0 bg-gradient-to-b from-black/90 via-black/50 to-transparent p-4 sm:p-6 pb-14 z-30 transition-all duration-300 pointer-events-auto flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
+              showControls ? "opacity-100 translate-y-0" : "opacity-0 -translate-y-2 pointer-events-none"
             }`}
           >
-            <div className="text-sm md:text-base font-bold text-neutral-100 tracking-wide drop-shadow-[0_2px_4px_rgba(0,0,0,0.9)]">
+            <div className="text-sm md:text-base font-bold text-neutral-100 tracking-wide drop-shadow-[0_2px_4px_rgba(0,0,0,0.9)] truncate max-w-xl">
               {epNum}. {episodeTitle || `Episode ${epNum}`}
+            </div>
+
+            <div className="flex items-center space-x-6 self-end sm:self-auto">
+              {/* Desktop & Mobile Responsive Top Volume Hud Block */}
+              <div className="flex items-center space-x-2 bg-black/40 backdrop-blur-md px-3 py-1.5 rounded-lg border border-neutral-800/40">
+                <button onClick={toggleMute} className="mobile-expand-hitbox text-[10px] font-mono font-bold text-neutral-400 hover:text-neutral-200 transition tracking-wider">
+                  {isMuted ? "UNMUTE" : "VOLUME"}
+                </button>
+                <input
+                  type="range" min={0} max={1} step={0.01} value={isMuted ? 0 : volume} onChange={handleVolumeChange}
+                  className="w-16 sm:w-20 h-1 bg-neutral-800 appearance-none cursor-pointer accent-orange-500 rounded-full" />
+              </div>
+
+              {/* Dynamic Action Access Button standard layout */}
+              <button
+                onClick={() => {
+                  const nextMode = !captionsEnabled;
+                  setCaptionsEnabled(nextMode);
+                  if (videoRef.current) {
+                    const textTracks = videoRef.current.textTracks;
+                    for (let i = 0; i < textTracks.length; i++) {
+                      textTracks[i].mode = nextMode ? "showing" : "hidden";
+                    }
+                  }
+                }}
+                className={`mobile-expand-hitbox hover:scale-105 active:scale-95 flex items-center justify-center outline-none bg-black/40 border border-neutral-800/30 p-2 rounded-lg backdrop-blur-md transition duration-200 ${
+                  captionsEnabled ? "opacity-100" : "opacity-40"
+                }`}
+                title={captionsEnabled ? "Disable Captions" : "Enable Captions"}
+              >
+                <img 
+                  src="/Assets/caption.png" 
+                  alt="Captions Toggle"
+                  style={{ width: "18px", height: "18px", filter: "invert(1) brightness(2)" }}
+                  className="object-contain"
+                />
+              </button>
+
+              <button
+                onClick={toggleFullscreen}
+                className="mobile-expand-hitbox hover:scale-105 active:scale-95 flex items-center justify-center outline-none bg-black/40 border border-neutral-800/30 p-2 rounded-lg backdrop-blur-md transition duration-200"
+                title="Toggle Fullscreen"
+              >
+                <img 
+                  src="/Assets/full-screen.png" 
+                  alt="Fullscreen Toggle"
+                  style={{ width: "16px", height: "16px" }}
+                  className="object-contain invert brightness-200 contrast-200 opacity-100"
+                />
+              </button>
             </div>
           </div>
 
+          {/* CENTERED KINETIC CONTROLS PLATFORM - CRUNCHYROLL & NETFLIX STYLED */}
+          <div 
+            className={`absolute inset-0 flex items-center justify-center z-30 transition-all duration-300 pointer-events-auto gap-8 sm:gap-14 ${
+              showControls ? "opacity-100 scale-100" : "opacity-0 scale-95 pointer-events-none"
+            }`}
+          >
+            {/* Rewind 10s Trigger */}
+            <button
+              onClick={() => skipSeconds(-10)}
+              className="mobile-expand-hitbox w-14 h-14 sm:w-16 sm:h-16 flex items-center justify-center rounded-full bg-black/50 hover:bg-black/70 border border-neutral-800/60 transition duration-200 group/btn transform hover:scale-110 active:scale-90 shadow-lg backdrop-blur-sm"
+              title="Rewind 10 Seconds"
+            >
+              <span className="font-mono text-xs font-bold text-neutral-300 group-hover/btn:text-white tracking-tighter flex flex-col items-center">
+                <span className="text-[15px] sm:text-[17px] leading-none mb-0.5">&larr;</span>
+                <span className="text-[10px] uppercase font-bold tracking-tight">10s</span>
+              </span>
+            </button>
+
+            {/* Core Center Play / Pause Cluster */}
+            <button
+              onClick={togglePlay}
+              className="mobile-expand-hitbox w-20 h-20 sm:w-24 sm:h-24 flex items-center justify-center rounded-full bg-orange-500 hover:bg-orange-600 text-white transition-all duration-200 transform hover:scale-110 active:scale-95 shadow-[0_0_30px_rgba(249,115,22,0.4)] border border-orange-400/30"
+              title={isPlaying ? "Pause" : "Play"}
+            >
+              <img
+                src={isPlaying ? "/Assets/pause.png" : "/Assets/play.png"}
+                alt="Playback Status"
+                style={{ 
+                  width: isPlaying ? "26px" : "28px", 
+                  height: isPlaying ? "26px" : "28px",
+                  marginLeft: isPlaying ? "0px" : "4px" 
+                }}
+                className="object-contain invert brightness-200 contrast-200"
+              />
+            </button>
+
+            {/* Fast Forward 10s Trigger */}
+            <button
+              onClick={() => skipSeconds(10)}
+              className="mobile-expand-hitbox w-14 h-14 sm:w-16 sm:h-16 flex items-center justify-center rounded-full bg-black/50 hover:bg-black/70 border border-neutral-800/60 transition duration-200 group/btn transform hover:scale-110 active:scale-90 shadow-lg backdrop-blur-sm"
+              title="Fast Forward 10 Seconds"
+            >
+              <span className="font-mono text-xs font-bold text-neutral-300 group-hover/btn:text-white tracking-tighter flex flex-col items-center">
+                <span className="text-[15px] sm:text-[17px] leading-none mb-0.5">&rarr;</span>
+                <span className="text-[10px] uppercase font-bold tracking-tight">10s</span>
+              </span>
+            </button>
+          </div>
+
+          {/* MASTER SUBTITLE RENDER CONTAINER */}
           {captionsEnabled && currentCaption && (
-            <div className="absolute inset-x-4 bottom-20 md:bottom-24 flex items-center justify-center pointer-events-none z-30 text-center">
+            <div className="absolute inset-x-4 bottom-28 md:bottom-32 flex items-center justify-center pointer-events-none z-30 text-center">
               <p className="px-4 py-1.5 rounded bg-black/85 text-white font-sans font-medium text-sm sm:text-base md:text-lg lg:text-xl tracking-wide max-w-[85%] border border-neutral-900/40 shadow-xl drop-shadow-md whitespace-pre-line leading-relaxed">
                 {currentCaption}
               </p>
             </div>
           )}
 
+          {/* ANI-SKIP DESCRIPTOR FLOATING TRIGGER BUTTON */}
           {currentActiveSkip && showSkipButton && !loading && (
             <button
               onClick={executeManualSkipSegment}
-              className="absolute bottom-24 right-8 bg-neutral-900/90 hover:bg-black text-white font-sans font-bold text-sm tracking-wide px-7 py-3.5 rounded border border-neutral-700/60 shadow-[0_4px_30px_rgba(0,0,0,0.5)] backdrop-blur-md transition-all duration-200 transform hover:scale-105 active:scale-95 z-30 overflow-hidden flex items-center justify-center min-w-[140px]"
+              className="absolute bottom-28 right-8 bg-neutral-900/90 hover:bg-black text-white font-sans font-bold text-sm tracking-wide px-7 py-3.5 rounded border border-neutral-700/60 shadow-[0_4px_30px_rgba(0,0,0,0.5)] backdrop-blur-md transition-all duration-200 transform hover:scale-105 active:scale-95 z-30 overflow-hidden flex items-center justify-center min-w-[140px]"
             >
               <div className="absolute top-0 bottom-0 left-0 bg-neutral-950/60 animate-netflix-countdown pointer-events-none mix-blend-multiply" />
               <span className="relative z-10 flex items-center gap-2">
@@ -1074,11 +1201,13 @@ function WatchContent() {
             </button>
           )}
 
-          <div className={`absolute inset-x-0 bottom-0 bg-gradient-to-t from-black via-black/85 to-transparent p-6 pt-16 flex flex-col space-y-4 transition-all duration-300 z-20 pointer-events-auto ${
+          {/* STREAM DECK BASE LOWER TIMELINEHUD BLOCK */}
+          <div className={`absolute inset-x-0 bottom-0 bg-gradient-to-t from-black via-black/90 to-transparent p-4 sm:p-6 pt-20 flex flex-col transition-all duration-300 z-20 pointer-events-auto ${
             showControls ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4 pointer-events-none"
-          }`}>
+          } ${isFullscreen ? "space-y-5 pb-8" : "space-y-3"}`}>
             
-            <div className="relative w-full flex items-center h-3 group/timeline">
+            {/* TIMELINE TIMESTEP TRACKBAR CONTAINER */}
+            <div className="relative w-full flex items-center h-4 group/timeline">
               <div className="absolute left-0 right-0 h-1.5 bg-neutral-800/60 rounded-full flex overflow-hidden">
                 {duration > 0 && skipIntervals.length > 0 ? (
                   (() => {
@@ -1122,86 +1251,67 @@ function WatchContent() {
                 className="absolute w-full h-full opacity-0 cursor-pointer z-20" />
             </div>
 
+            {/* DYNAMIC METRIC DISPATCH AND MULTI-MODE ACTION FOOTER */}
             <div className="flex items-center justify-between">
-              <div className="flex items-center space-x-5">
-                {/* PLAY/PAUSE EXTENDED TAP RADIUS */}
-                <button
-                  onClick={togglePlay}
-                  className="mobile-expand-hitbox hover:scale-105 active:scale-95 transition-all duration-200 flex items-center justify-center outline-none bg-transparent"
-                  title={isPlaying ? "Pause" : "Play"}
-                >
-                  <img
-                    src={isPlaying ? "/Assets/pause.png" : "/Assets/play.png"}
-                    alt="Playback"
-                    style={{ width: isPlaying ? "18px" : "14px", height: isPlaying ? "18px" : "14px" }}
-                    className="object-contain invert brightness-200 contrast-200 opacity-100 transition duration-200"
-                  />
-                </button>
+              {/* Left Segment: Standard Playback Session Timers */}
+              <div className="text-xs font-mono text-neutral-400 tracking-tight">
+                <span className="text-neutral-100 font-bold bg-neutral-900/60 px-2 py-1 rounded border border-neutral-800/40">{formatTime(currentTime)}</span>
+                <span className="mx-2 text-neutral-700">/</span>
+                <span>{formatTime(duration)}</span>
+              </div>
 
-                <div className="text-xs font-mono text-neutral-400 tracking-tight bg-transparent">
-                  <span className="text-neutral-100 font-bold">{formatTime(currentTime)}</span>
-                  <span className="mx-2 text-neutral-600">/</span>
-                  <span>{formatTime(duration)}</span>
-                </div>
+              {/* Right Segment: Conditionally Loaded Dynamic Grid Configurations */}
+              {isFullscreen ? (
+                /* INJECTED INTEGRATED COMBINATORIAL EMBEDDED BUTTON SET (AUTOPLAY, SKIP, AUTONEXT, NEXT EPISODE) */
+                <div className="flex items-center bg-neutral-900/90 border border-neutral-800/80 p-1.5 rounded-xl space-x-1.5 shadow-xl backdrop-blur-md">
+                  <label className="mobile-expand-hitbox flex items-center space-x-2 px-3 py-1.5 rounded-lg hover:bg-neutral-800/40 cursor-pointer select-none group text-xs font-mono text-neutral-300">
+                    <input
+                      type="checkbox" checked={autoplay} onChange={toggleAutoplayState}
+                      className="w-3.5 h-3.5 rounded border-neutral-700 bg-neutral-950 text-orange-500 focus:ring-0 cursor-pointer accent-orange-500" />
+                    <span className="group-hover:text-white transition hidden sm:inline">Autoplay</span>
+                  </label>
 
-                <div className="hidden sm:flex items-center space-x-2 pl-4 border-l border-neutral-800">
-                  <button onClick={toggleMute} className="mobile-expand-hitbox text-xs font-mono font-bold text-neutral-400 hover:text-neutral-200 transition">
-                    {isMuted ? "UNMUTE" : "MUTE"}
+                  <div className="w-px h-4 bg-neutral-800" />
+
+                  <label className="mobile-expand-hitbox flex items-center space-x-2 px-3 py-1.5 rounded-lg hover:bg-neutral-800/40 cursor-pointer select-none group text-xs font-mono text-neutral-300">
+                    <input
+                      type="checkbox" checked={autoskip} onChange={toggleAutoskipState}
+                      className="w-3.5 h-3.5 rounded border-neutral-700 bg-neutral-950 text-orange-500 focus:ring-0 cursor-pointer accent-orange-500" />
+                    <span className="group-hover:text-white transition hidden sm:inline">Auto-Skip</span>
+                  </label>
+
+                  <div className="w-px h-4 bg-neutral-800" />
+
+                  <label className="mobile-expand-hitbox flex items-center space-x-2 px-3 py-1.5 rounded-lg hover:bg-neutral-800/40 cursor-pointer select-none group text-xs font-mono text-neutral-300">
+                    <input
+                      type="checkbox" checked={autonext} onChange={toggleAutonextState}
+                      className="w-3.5 h-3.5 rounded border-neutral-700 bg-neutral-950 text-orange-500 focus:ring-0 cursor-pointer accent-orange-500" />
+                    <span className="group-hover:text-white transition hidden sm:inline">Auto-Next</span>
+                  </label>
+
+                  <div className="w-px h-4 bg-neutral-800" />
+
+                  <button
+                    onClick={navigateToNextEpisode} disabled={!hasNextEpisodeElement}
+                    className="mobile-expand-hitbox px-3.5 py-1.5 rounded-lg bg-orange-500 hover:bg-orange-600 disabled:bg-neutral-950 text-white disabled:text-neutral-600 border border-orange-400/20 disabled:border-neutral-800/40 font-mono font-bold text-[10px] tracking-wider uppercase transition active:scale-95 shadow-md flex items-center gap-1"
+                  >
+                    Next Ep &rarr;
                   </button>
-                  <input
-                    type="range" min={0} max={1} step={0.01} value={isMuted ? 0 : volume} onChange={handleVolumeChange}
-                    className="w-20 h-1 bg-neutral-800 appearance-none cursor-pointer accent-orange-500 rounded-full" />
                 </div>
-              </div>
-
-              <div className="flex items-center space-x-4">
-                {/* CAPTIONS BUTTON EXTENDED TAP RADIUS */}
-                <button
-                  onClick={() => {
-                    const nextMode = !captionsEnabled;
-                    setCaptionsEnabled(nextMode);
-                    if (videoRef.current) {
-                      const textTracks = videoRef.current.textTracks;
-                      for (let i = 0; i < textTracks.length; i++) {
-                        textTracks[i].mode = nextMode ? "showing" : "hidden";
-                      }
-                    }
-                  }}
-                  className={`mobile-expand-hitbox hover:scale-105 active:scale-95 flex items-center justify-center outline-none bg-transparent transition duration-200 ${
-                    captionsEnabled ? "opacity-100" : "opacity-40"
-                  }`}
-                  title={captionsEnabled ? "Disable Captions" : "Enable Captions"}
-                >
-                  <img 
-                    src="/Assets/caption.png" 
-                    alt="Captions Toggle"
-                    style={{ width: "22px", height: "22px", filter: "invert(1) brightness(2)" }}
-                    className="object-contain"
-                  />
-                </button>
-
-                {/* FULLSCREEN BUTTON EXTENDED TAP RADIUS */}
-                <button
-                  onClick={toggleFullscreen}
-                  className="mobile-expand-hitbox hover:scale-105 active:scale-95 flex items-center justify-center outline-none bg-transparent transition duration-200"
-                  title="Toggle Fullscreen"
-                >
-                  <img 
-                    src="/Assets/full-screen.png" 
-                    alt="Fullscreen Toggle"
-                    style={{ width: "20px", height: "20px" }}
-                    className="object-contain invert brightness-200 contrast-200 opacity-100"
-                  />
-                </button>
-              </div>
+              ) : (
+                /* Native Fallback Space Buffer for Standard Mini-Layout Optimization */
+                <div className="text-[10px] font-mono tracking-widest text-neutral-500 uppercase bg-black/20 px-2 py-1 rounded">
+                  Cinema Engine
+                </div>
+              )}
             </div>
           </div>
         </div>
 
+        {/* DEFAULT COMPACT STANDARD FOOTER OPTIONS DECK (Only rendered when not standard Fullscreen mode) */}
         <div className="w-full bg-neutral-900/40 py-1.5 px-4 rounded-xl border border-neutral-900 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 shadow-md backdrop-blur-sm">
           <div className="flex flex-wrap items-center gap-6 text-xs font-mono text-neutral-300">
-            {/* CHECKBOX AUTOMATIONS EXTENDED TAP RADIUS */}
-            <label className="flex items-center space-x-2.5 cursor-pointer select-none group relative py-1">
+            <label className="mobile-expand-hitbox flex items-center space-x-2.5 cursor-pointer select-none group relative py-1">
               <input
                 type="checkbox"
                 checked={autoplay}
@@ -1211,7 +1321,7 @@ function WatchContent() {
               <span className="group-hover:text-neutral-100 transition">Autoplay</span>
             </label>
 
-            <label className="flex items-center space-x-2.5 cursor-pointer select-none group relative py-1">
+            <label className="mobile-expand-hitbox flex items-center space-x-2.5 cursor-pointer select-none group relative py-1">
               <input
                 type="checkbox"
                 checked={autoskip}
@@ -1221,7 +1331,7 @@ function WatchContent() {
               <span className="group-hover:text-neutral-100 transition">Auto-Skip</span>
             </label>
 
-            <label className="flex items-center space-x-2.5 cursor-pointer select-none group relative py-1">
+            <label className="mobile-expand-hitbox flex items-center space-x-2.5 cursor-pointer select-none group relative py-1">
               <input
                 type="checkbox"
                 checked={autonext}
@@ -1236,14 +1346,14 @@ function WatchContent() {
             <button
               onClick={navigateToPrevEpisode}
               disabled={!hasPrevEpisode}
-              className="px-3 py-1 rounded-md bg-neutral-950 border border-neutral-900 text-neutral-400 hover:text-neutral-200 disabled:opacity-20 disabled:hover:text-neutral-400 font-mono font-bold text-[10px] tracking-wider uppercase transition active:scale-95"
+              className="mobile-expand-hitbox px-3 py-1 rounded-md bg-neutral-950 border border-neutral-900 text-neutral-400 hover:text-neutral-200 disabled:opacity-20 disabled:hover:text-neutral-400 font-mono font-bold text-[10px] tracking-wider uppercase transition active:scale-95"
             >
               &larr; Prev
             </button>
             <button
               onClick={navigateToNextEpisode}
               disabled={!hasNextEpisodeElement}
-              className="px-3 py-1 rounded-md bg-neutral-950 border border-neutral-900 text-neutral-400 hover:text-neutral-200 disabled:opacity-20 disabled:hover:text-neutral-400 font-mono font-bold text-[10px] tracking-wider uppercase transition active:scale-95"
+              className="mobile-expand-hitbox px-3 py-1 rounded-md bg-neutral-950 border border-neutral-900 text-neutral-400 hover:text-neutral-200 disabled:opacity-20 disabled:hover:text-neutral-400 font-mono font-bold text-[10px] tracking-wider uppercase transition active:scale-95"
             >
               Next &rarr;
             </button>
