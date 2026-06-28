@@ -232,8 +232,6 @@ export default function HomePage() {
   return (
     <main className="min-h-screen bg-neutral-950 text-neutral-100 font-sans antialiased selection:bg-orange-500 selection:text-white pb-20 overflow-x-hidden">
       
-      <AccountBar />
-
       {/* GLOBAL NAVIGATION HEADER */}
       <header className="fixed top-0 inset-x-0 h-16 bg-gradient-to-b from-black/90 to-transparent backdrop-blur-md z-50 flex items-center justify-between px-6 md:px-12 border-b border-neutral-900/40">
         <div className="flex items-center space-x-12">
@@ -271,22 +269,28 @@ export default function HomePage() {
           </nav>
         </div>
 
-        {/* SEARCH DECK INPUT FRAME */}
-        <div className="relative max-w-xs w-full hidden sm:block ml-6">
-          <div className="absolute inset-y-0 left-3 flex items-center pointer-events-none">
-            <img 
-              src="/Assets/search-icon.png" 
-              alt="Search" 
-              className="w-4 h-4 object-contain invert brightness-200 contrast-200 opacity-90"
+        {/* CONTROLS AREA: SEARCH DECK + PROFILE SYNCHRONIZATION */}
+        <div className="flex items-center space-x-4 ml-auto">
+          {/* SEARCH DECK INPUT FRAME */}
+          <div className="relative max-w-xs w-48 lg:w-64 hidden sm:block">
+            <div className="absolute inset-y-0 left-3 flex items-center pointer-events-none">
+              <img 
+                src="/Assets/search-icon.png" 
+                alt="Search" 
+                className="w-4 h-4 object-contain invert brightness-200 contrast-200 opacity-90"
+              />
+            </div>
+            <input
+              type="text"
+              placeholder="Search titles, genres..."
+              value={searchQuery}
+              onChange={handleSearchChange}
+              className="w-full pl-10 pr-4 py-1.5 rounded-md bg-neutral-900/90 border border-neutral-800 text-sm placeholder-neutral-500 focus:outline-none focus:border-orange-500 focus:bg-neutral-900 transition duration-200"
             />
           </div>
-          <input
-            type="text"
-            placeholder="Search titles, genres..."
-            value={searchQuery}
-            onChange={handleSearchChange}
-            className="w-full pl-10 pr-4 py-1.5 rounded-md bg-neutral-900/90 border border-neutral-800 text-sm placeholder-neutral-500 focus:outline-none focus:border-orange-500 focus:bg-neutral-900 transition duration-200"
-          />
+
+          {/* INTEGRATED CLOUD HUB SYNC COMPONENT */}
+          <AccountBar />
         </div>
       </header>
 
