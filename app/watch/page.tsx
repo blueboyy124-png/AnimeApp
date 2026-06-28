@@ -76,7 +76,7 @@ function WatchContent() {
   const [currentCaption,  setCurrentCaption]  = useState<string>("");
 
   const [animeTitle,      setAnimeTitle]      = useState<string>("Anime Series");
-  const [episodeTitle,    setEpisodeTitle]    = useState<string>("");
+  const [episodeTitle,    setEpisodeTitle]    = useState<string>("Currently Loading...");
   const [episodeDesc,     setEpisodeDesc]     = useState<string>("");
   const [episodeSnapshot, setEpisodeSnapshot] = useState<string>("");
 
@@ -130,7 +130,6 @@ function WatchContent() {
 
     if (typeof window === "undefined") return;
 
-    // Load Automation settings if stored locally
     const storedAutoplay = localStorage.getItem("streamanime_autoplay");
     const storedAutoskip = localStorage.getItem("streamanime_autoskip");
     const storedAutonext = localStorage.getItem("streamanime_autonext");
@@ -262,26 +261,42 @@ function WatchContent() {
   };
 
   const toggleFullscreen = () => {
-    if (!playerContainerRef.current) return;
-    if (!document.fullscreenElement) {
-      playerContainerRef.current.requestFullscreen()
-        .then(() => setIsFullscreen(true))
-        .catch((err) => console.error("Fullscreen rejected:", err));
+    if (!playerContainerRef.current || !videoRef.current) return;
+
+    const nativeVideo: any = videoRef.current;
+    const container: any = playerContainerRef.current;
+
+    if (!document.fullscreenElement && !(document as any).webkitFullscreenElement) {
+      if (container.requestFullscreen) {
+        container.requestFullscreen().then(() => setIsFullscreen(true)).catch(() => {});
+      } else if (container.webkitRequestFullscreen) {
+        container.webkitRequestFullscreen();
+        setIsFullscreen(true);
+      } else if (nativeVideo.webkitEnterFullscreen) {
+        nativeVideo.webkitEnterFullscreen();
+        setIsFullscreen(true);
+      }
     } else {
-      document.exitFullscreen().then(() => setIsFullscreen(false));
+      if (document.exitFullscreen) {
+        document.exitFullscreen().then(() => setIsFullscreen(false));
+      } else if ((document as any).webkitExitFullscreen) {
+        (document as any).webkitExitFullscreen();
+        setIsFullscreen(false);
+      }
     }
   };
 
-  const handleSignOutAction = () => {
-    localStorage.removeItem("streamanime_active_profile_id");
-    localStorage.removeItem("streamanime_watch_history");
-    window.location.reload();
-  };
-
   useEffect(() => {
-    const sync = () => setIsFullscreen(!!document.fullscreenElement);
-    document.addEventListener("fullscreenchange", sync);
-    return () => document.removeEventListener("fullscreenchange", sync);
+    const syncFullscreenState = () => {
+      const isCurrentlyFull = !!(document.fullscreenElement || (document as any).webkitFullscreenElement);
+      setIsFullscreen(isCurrentlyFull);
+    };
+    document.addEventListener("fullscreenchange", syncFullscreenState);
+    document.addEventListener("webkitfullscreenchange", syncFullscreenState);
+    return () => {
+      document.removeEventListener("fullscreenchange", syncFullscreenState);
+      document.removeEventListener("webkitfullscreenchange", syncFullscreenState);
+    };
   }, []);
 
   const handleCategoryChange = (target: "sub" | "dub") => {
@@ -334,7 +349,12 @@ function WatchContent() {
     localStorage.setItem("streamanime_autonext", String(next));
   };
 
-  // HYBRID SYNC: Commits metrics to both local storage AND your cloud database profile row!
+  const handleSignOutAction = () => {
+    localStorage.removeItem("streamanime_active_profile_id");
+    localStorage.removeItem("streamanime_watch_history");
+    window.location.reload();
+  };
+
   const commitPlaybackSessionToStorageLog = useCallback(async (current: number, total: number) => {
     if (!anilistId || anilistId === "0" || !total || total <= 0) return;
     try {
@@ -365,10 +385,8 @@ function WatchContent() {
       list.unshift(trackingPayload);
       const optimizedHistorySlice = list.slice(0, 20);
       
-      // Save locally for UI performance
       localStorage.setItem(storageKey, JSON.stringify(optimizedHistorySlice));
 
-      // Push history directly to Supabase cloud layout row
       const activeId = localStorage.getItem("streamanime_active_profile_id");
       if (activeId) {
         await supabase
@@ -386,7 +404,6 @@ function WatchContent() {
     const time = videoRef.current.currentTime;
     setCurrentTime(time);
 
-    // Dynamic extraction of active track cues
     if (videoRef.current.textTracks && videoRef.current.textTracks.length > 0) {
       let activeCueText = "";
       const currentTracks = videoRef.current.textTracks;
@@ -753,7 +770,7 @@ function WatchContent() {
             maxMaxBufferLength:       60,
             backBufferLength:         30,
             maxBufferHole:            0.8,
-            nudgeMaxRetry:          5,
+            nudgeMaxRetry:            5,
             fragLoadingTimeOut:       20000,
             fragLoadingMaxRetry:      4,
           });
@@ -772,7 +789,6 @@ function WatchContent() {
               videoRef.current.play().catch(() => {});
             }
 
-            // Sync structural track state configuration loops
             if (videoRef.current) {
               const textTracks = videoRef.current.textTracks;
               for (let i = 0; i < textTracks.length; i++) {
@@ -884,13 +900,13 @@ function WatchContent() {
   return (
     <main className="min-h-screen bg-neutral-950 text-neutral-100 font-sans antialiased pb-20 selection:bg-orange-500 selection:text-white overflow-x-hidden pt-24 px-6 md:px-12">
       
-      {/* Absolute Fallback style injection to handle native cursor overlays in macOS context layouts */}
-      {!showControls && isPlaying && (
+      {!showControls && isPlaying && isFullscreen && (
         <style dangerouslySetInnerHTML={{__html: `
           * { cursor: none !important; }
         `}} />
       )}
 
+      {/* EXPANDED MOBILE INVISIBLE CLICK-RADIUS ENGINES via pseudo-elements */}
       <style dangerouslySetInnerHTML={{__html: `
         @keyframes netflixCountdown {
           0% { width: 0%; }
@@ -905,6 +921,23 @@ function WatchContent() {
         video::cue {
           color: transparent !important;
           background: transparent !important;
+        }
+        
+        /* Expand tap targets cleanly on small touch targets to 44x44px minimum without styling change */
+        .mobile-expand-hitbox {
+          position: relative;
+        }
+        .mobile-expand-hitbox::after {
+          content: '';
+          position: absolute;
+          top: 50%;
+          left: 50%;
+          transform: translate(-50%, -50%);
+          min-width: 44px;
+          min-height: 44px;
+          width: 150%;
+          height: 150%;
+          cursor: pointer;
         }
       `}} />
 
@@ -934,7 +967,6 @@ function WatchContent() {
             />
           </div>
 
-          {/* NETFLIX-STYLE PREMIUM TOP-RIGHT PROFILE BADGE */}
           {currentProfile && (
             <div className="relative group flex items-center">
               <button 
@@ -967,10 +999,10 @@ function WatchContent() {
           <span className="text-xs font-mono text-white font-bold truncate max-w-md">{animeTitle}</span>
         </div>
 
-        {/* ── VIDEO PLAYER CONTAINER ────────────────────────────────────────── */}
         <div
           ref={playerContainerRef}
           onMouseMove={triggerControlsActivity}
+          onTouchStart={triggerControlsActivity}
           className="relative w-full aspect-video bg-black rounded-xl overflow-hidden border border-neutral-800/60 group shadow-[0_0_50px_rgba(0,0,0,0.8)] transition-all duration-300 ring-1 ring-white/5 select-none"
         >
           {loading && (
@@ -1011,7 +1043,6 @@ function WatchContent() {
             className="w-full h-full object-contain cursor-pointer bg-black"
           />
 
-          {/* CUSTOM FLOATING TOP TITLE OVERLAY - ["Episode 1". "Episode Title"] */}
           <div 
             className={`absolute top-0 inset-x-0 bg-gradient-to-b from-black/80 via-black/40 to-transparent p-6 pb-12 z-30 transition-all duration-300 pointer-events-none ${
               showControls ? "opacity-100 translate-y-0" : "opacity-0 -translate-y-2"
@@ -1022,7 +1053,6 @@ function WatchContent() {
             </div>
           </div>
 
-          {/* DYNAMIC STAGE CONTAINER FOR CUSTOM SUBTITLE RENDERING */}
           {captionsEnabled && currentCaption && (
             <div className="absolute inset-x-4 bottom-20 md:bottom-24 flex items-center justify-center pointer-events-none z-30 text-center">
               <p className="px-4 py-1.5 rounded bg-black/85 text-white font-sans font-medium text-sm sm:text-base md:text-lg lg:text-xl tracking-wide max-w-[85%] border border-neutral-900/40 shadow-xl drop-shadow-md whitespace-pre-line leading-relaxed">
@@ -1031,7 +1061,6 @@ function WatchContent() {
             </div>
           )}
 
-          {/* SKIP BUTTON */}
           {currentActiveSkip && showSkipButton && !loading && (
             <button
               onClick={executeManualSkipSegment}
@@ -1045,12 +1074,10 @@ function WatchContent() {
             </button>
           )}
 
-          {/* PLAYER CONTROLS HUB */}
           <div className={`absolute inset-x-0 bottom-0 bg-gradient-to-t from-black via-black/85 to-transparent p-6 pt-16 flex flex-col space-y-4 transition-all duration-300 z-20 pointer-events-auto ${
             showControls ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4 pointer-events-none"
           }`}>
             
-            {/* PROGRESS BAR BARRIER WITH GAP INDICATORS */}
             <div className="relative w-full flex items-center h-3 group/timeline">
               <div className="absolute left-0 right-0 h-1.5 bg-neutral-800/60 rounded-full flex overflow-hidden">
                 {duration > 0 && skipIntervals.length > 0 ? (
@@ -1095,12 +1122,12 @@ function WatchContent() {
                 className="absolute w-full h-full opacity-0 cursor-pointer z-20" />
             </div>
 
-            {/* LOWER HUB CONTROLS BLOCK */}
             <div className="flex items-center justify-between">
               <div className="flex items-center space-x-5">
+                {/* PLAY/PAUSE EXTENDED TAP RADIUS */}
                 <button
                   onClick={togglePlay}
-                  className="hover:scale-105 active:scale-95 transition-all duration-200 flex items-center justify-center outline-none bg-transparent"
+                  className="mobile-expand-hitbox hover:scale-105 active:scale-95 transition-all duration-200 flex items-center justify-center outline-none bg-transparent"
                   title={isPlaying ? "Pause" : "Play"}
                 >
                   <img
@@ -1117,8 +1144,8 @@ function WatchContent() {
                   <span>{formatTime(duration)}</span>
                 </div>
 
-                <div className="flex items-center space-x-2 pl-4 border-l border-neutral-800">
-                  <button onClick={toggleMute} className="text-xs font-mono font-bold text-neutral-400 hover:text-neutral-200 transition">
+                <div className="hidden sm:flex items-center space-x-2 pl-4 border-l border-neutral-800">
+                  <button onClick={toggleMute} className="mobile-expand-hitbox text-xs font-mono font-bold text-neutral-400 hover:text-neutral-200 transition">
                     {isMuted ? "UNMUTE" : "MUTE"}
                   </button>
                   <input
@@ -1128,7 +1155,7 @@ function WatchContent() {
               </div>
 
               <div className="flex items-center space-x-4">
-                {/* CAPTIONS TOGGLE BUTTON - CONVERTED TO WHITE VIA CSS FILTER INVERT */}
+                {/* CAPTIONS BUTTON EXTENDED TAP RADIUS */}
                 <button
                   onClick={() => {
                     const nextMode = !captionsEnabled;
@@ -1140,7 +1167,7 @@ function WatchContent() {
                       }
                     }
                   }}
-                  className={`hover:scale-105 active:scale-95 flex items-center justify-center outline-none bg-transparent transition duration-200 ${
+                  className={`mobile-expand-hitbox hover:scale-105 active:scale-95 flex items-center justify-center outline-none bg-transparent transition duration-200 ${
                     captionsEnabled ? "opacity-100" : "opacity-40"
                   }`}
                   title={captionsEnabled ? "Disable Captions" : "Enable Captions"}
@@ -1153,9 +1180,10 @@ function WatchContent() {
                   />
                 </button>
 
+                {/* FULLSCREEN BUTTON EXTENDED TAP RADIUS */}
                 <button
                   onClick={toggleFullscreen}
-                  className="hover:scale-105 active:scale-95 flex items-center justify-center outline-none bg-transparent transition duration-200"
+                  className="mobile-expand-hitbox hover:scale-105 active:scale-95 flex items-center justify-center outline-none bg-transparent transition duration-200"
                   title="Toggle Fullscreen"
                 >
                   <img 
@@ -1170,11 +1198,10 @@ function WatchContent() {
           </div>
         </div>
 
-        {/* ── AUTOMATION CONTROL AND QUICK NAVIGATION BOX (SKINNY LAYOUT) ───── */}
         <div className="w-full bg-neutral-900/40 py-1.5 px-4 rounded-xl border border-neutral-900 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 shadow-md backdrop-blur-sm">
-          {/* Left: Preferences Switches */}
           <div className="flex flex-wrap items-center gap-6 text-xs font-mono text-neutral-300">
-            <label className="flex items-center space-x-2.5 cursor-pointer select-none group">
+            {/* CHECKBOX AUTOMATIONS EXTENDED TAP RADIUS */}
+            <label className="flex items-center space-x-2.5 cursor-pointer select-none group relative py-1">
               <input
                 type="checkbox"
                 checked={autoplay}
@@ -1184,7 +1211,7 @@ function WatchContent() {
               <span className="group-hover:text-neutral-100 transition">Autoplay</span>
             </label>
 
-            <label className="flex items-center space-x-2.5 cursor-pointer select-none group">
+            <label className="flex items-center space-x-2.5 cursor-pointer select-none group relative py-1">
               <input
                 type="checkbox"
                 checked={autoskip}
@@ -1194,7 +1221,7 @@ function WatchContent() {
               <span className="group-hover:text-neutral-100 transition">Auto-Skip</span>
             </label>
 
-            <label className="flex items-center space-x-2.5 cursor-pointer select-none group">
+            <label className="flex items-center space-x-2.5 cursor-pointer select-none group relative py-1">
               <input
                 type="checkbox"
                 checked={autonext}
@@ -1205,7 +1232,6 @@ function WatchContent() {
             </label>
           </div>
 
-          {/* Right: Chapter Pagination Controls */}
           <div className="flex items-center space-x-2 self-end sm:self-auto">
             <button
               onClick={navigateToPrevEpisode}
@@ -1224,24 +1250,18 @@ function WatchContent() {
           </div>
         </div>
 
-        {/* ── UNIFIED MASTER INFO + CONTROL CONSOLE CONTAINER ────────────────── */}
         <div className="w-full bg-neutral-900/40 border border-neutral-900 rounded-xl overflow-hidden shadow-xl backdrop-blur-sm">
-          {/* Top Row Grid: Information Headers vs Configuration Selectors */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6 p-6 items-start">
-            {/* Top Left: Episode Info Node */}
             <div className="flex flex-col">
               <div className="text-white text-lg md:text-xl tracking-tight leading-tight">
                 <span className="font-black">Episode {epNum}:</span> <span className="font-medium text-neutral-200">{episodeTitle || "Broadcast Segment"}</span>
               </div>
-              {/* Shifted Downward & Stripped /Simulcast Broadcast String */}
               <div className="text-[11px] font-mono text-neutral-500 font-medium tracking-wide mt-4">
                 Air Date: Oct 2024
               </div>
             </div>
 
-            {/* Top Right: Custom Dropdown Components */}
             <div className="flex items-center gap-4 md:justify-end">
-              {/* Dropdown 1: Audio Switcher */}
               <div className="flex flex-col space-y-1 w-full sm:w-40">
                 <label className="text-[9px] font-mono font-bold tracking-wider text-neutral-500 uppercase">
                   Audio Track
@@ -1258,7 +1278,6 @@ function WatchContent() {
                 </select>
               </div>
 
-              {/* Dropdown 2: Server Routing Node Selection */}
               <div className="flex flex-col space-y-1 w-full sm:w-44">
                 <label className="text-[9px] font-mono font-bold tracking-wider text-neutral-500 uppercase">
                   Routing Cluster
@@ -1278,10 +1297,8 @@ function WatchContent() {
             </div>
           </div>
 
-          {/* Floating Border Divider Section */}
           <div className="mx-6 border-b border-neutral-800/80" />
 
-          {/* Bottom Area: Metadata Segment Description */}
           <div className="p-6">
             <p className="text-xs md:text-sm text-neutral-400 leading-relaxed text-justify whitespace-pre-line">
               {episodeDesc ? cleanDescription(episodeDesc) : "Stream successfully parsed and synchronized."}
@@ -1289,7 +1306,6 @@ function WatchContent() {
           </div>
         </div>
 
-        {/* ── EPISODE LIST ─────────────────────────────────────────────────── */}
         <div className="space-y-6 pt-6 border-t border-neutral-900">
           <div className="border-b border-neutral-900 pb-3 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div className="space-y-0.5">
