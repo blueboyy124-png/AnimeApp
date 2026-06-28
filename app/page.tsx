@@ -2,6 +2,7 @@
 
 import { useState, useEffect, ChangeEvent } from "react";
 import Link from "next/link";
+import AccountBar from "./accountbar";
 
 interface AnimeCard {
   id: number;
@@ -231,6 +232,8 @@ export default function HomePage() {
   return (
     <main className="min-h-screen bg-neutral-950 text-neutral-100 font-sans antialiased selection:bg-orange-500 selection:text-white pb-20 overflow-x-hidden">
       
+      <AccountBar />
+
       {/* GLOBAL NAVIGATION HEADER */}
       <header className="fixed top-0 inset-x-0 h-16 bg-gradient-to-b from-black/90 to-transparent backdrop-blur-md z-50 flex items-center justify-between px-6 md:px-12 border-b border-neutral-900/40">
         <div className="flex items-center space-x-12">
