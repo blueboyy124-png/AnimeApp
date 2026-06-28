@@ -4,6 +4,7 @@ import React, { useEffect, useState, useRef, useCallback } from "react";
 import { Suspense } from 'react';
 import { useSearchParams, useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
+import { supabase, SupabaseProfile } from "../utils/supabase";
 
 const BACKEND_API = process.env.NEXT_PUBLIC_API_URL ?? "https://anime-api-one-cyan.vercel.app/api";
 
@@ -83,6 +84,9 @@ function WatchContent() {
   const [currentActiveSkip, setCurrentActiveSkip] = useState<any | null>(null);
   const [showSkipButton,  setShowSkipButton]  = useState(false);
 
+  // Active User Profile Context State
+  const [currentProfile,  setCurrentProfile]  = useState<SupabaseProfile | null>(null);
+
   // Automation Preferences States
   const [autoplay,        setAutoplay]        = useState<boolean>(true);
   const [autoskip,        setAutoskip]        = useState<boolean>(false);
@@ -100,8 +104,29 @@ function WatchContent() {
     ? (rawSlug.includes("watch/") ? rawSlug.split("/").pop() ?? rawSlug : rawSlug)
     : "";
 
+  // Load Active Session Profile
+  const loadActiveProfileData = useCallback(async () => {
+    try {
+      const activeId = localStorage.getItem("streamanime_active_profile_id");
+      if (!activeId) return;
+
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("*")
+        .eq("id", activeId)
+        .maybeSingle();
+
+      if (!error && data) {
+        setCurrentProfile(data);
+      }
+    } catch (err) {
+      console.error("Error pulling top header profile badge metadata:", err);
+    }
+  }, []);
+
   useEffect(() => {
     setIsMounted(true);
+    loadActiveProfileData();
 
     if (typeof window === "undefined") return;
 
@@ -137,7 +162,7 @@ function WatchContent() {
     if (parametersChanged) {
       router.replace(`${pathname}?${nextParams.toString()}`);
     }
-  }, [category, urlProvider, searchParams, pathname, router]);
+  }, [category, urlProvider, searchParams, pathname, router, loadActiveProfileData]);
 
   const activeCategory = category ?? "sub";
   const provider = urlProvider ?? "kiwi";
@@ -247,6 +272,12 @@ function WatchContent() {
     }
   };
 
+  const handleSignOutAction = () => {
+    localStorage.removeItem("streamanime_active_profile_id");
+    localStorage.removeItem("streamanime_watch_history");
+    window.location.reload();
+  };
+
   useEffect(() => {
     const sync = () => setIsFullscreen(!!document.fullscreenElement);
     document.addEventListener("fullscreenchange", sync);
@@ -303,18 +334,21 @@ function WatchContent() {
     localStorage.setItem("streamanime_autonext", String(next));
   };
 
-  const commitPlaybackSessionToStorageLog = useCallback((current: number, total: number) => {
+  // HYBRID SYNC: Commits metrics to both local storage AND your cloud database profile row!
+  const commitPlaybackSessionToStorageLog = useCallback(async (current: number, total: number) => {
     if (!anilistId || anilistId === "0" || !total || total <= 0) return;
     try {
       const storageKey = "streamanime_watch_history";
       const raw = localStorage.getItem(storageKey);
       let list: any[] = raw ? JSON.parse(raw) : [];
+      
       list = list.filter(
         (item: any) =>
           !(String(item.anilistId) === String(anilistId) &&
             String(item.episodeNumber) === String(epNum))
       );
-      list.unshift({
+
+      const trackingPayload = {
         anilistId: String(anilistId),
         animeTitle,
         episodeNumber: epNum,
@@ -326,10 +360,24 @@ function WatchContent() {
         category: activeCategory,
         slug: currentSlug,
         updatedAt: Date.now(),
-      });
-      localStorage.setItem(storageKey, JSON.stringify(list.slice(0, 20)));
+      };
+
+      list.unshift(trackingPayload);
+      const optimizedHistorySlice = list.slice(0, 20);
+      
+      // Save locally for UI performance
+      localStorage.setItem(storageKey, JSON.stringify(optimizedHistorySlice));
+
+      // Push history directly to Supabase cloud layout row
+      const activeId = localStorage.getItem("streamanime_active_profile_id");
+      if (activeId) {
+        await supabase
+          .from("profiles")
+          .update({ recent_episodes: optimizedHistorySlice })
+          .eq("id", activeId);
+      }
     } catch (e) {
-      console.error("History write failed:", e);
+      console.error("Cloud watch sync workflow failed:", e);
     }
   }, [anilistId, animeTitle, epNum, episodeSnapshot, provider, activeCategory, currentSlug]);
 
@@ -799,7 +847,7 @@ function WatchContent() {
 
     run();
     return () => { cancelled = true; };
-  }, [provider, anilistId, activeCategory, currentSlug, epNum, destroyHls, pathname, router, searchParams, autoplay, captionsEnabled]);
+  }, [provider, anilistId, activeCategory, currentSlug, epNum, destroyHls, pathname, router, searchParams, autoplay, captionsEnabled, commitPlaybackSessionToStorageLog]);
 
   const totalEpisodesCount = episodes.length;
   const chunkRanges: { start: number; end: number; label: string }[] = [];
@@ -872,16 +920,41 @@ function WatchContent() {
             <Link href="/?feed=popular" className="transition hover:text-neutral-200">Popular</Link>
           </nav>
         </div>
-        <div className="relative max-w-xs w-full hidden sm:block ml-6">
-          <div className="absolute inset-y-0 left-3 flex items-center pointer-events-none">
-            <img src="/Assets/search-icon.png" alt="Search" className="w-4 h-4 object-contain invert brightness-200 contrast-200 opacity-90" />
+
+        <div className="flex items-center space-x-6 flex-1 justify-end">
+          <div className="relative max-w-xs w-full hidden sm:block ml-6">
+            <div className="absolute inset-y-0 left-3 flex items-center pointer-events-none">
+              <img src="/Assets/search-icon.png" alt="Search" className="w-4 h-4 object-contain invert brightness-200 contrast-200 opacity-90" />
+            </div>
+            <input
+              type="text"
+              placeholder="Search titles, genres..."
+              onClick={() => router.push("/")}
+              className="w-full pl-10 pr-4 py-1.5 rounded-md bg-neutral-900/90 border border-neutral-800 text-sm placeholder-neutral-500 focus:outline-none focus:border-orange-500 focus:bg-neutral-900 transition duration-200 cursor-pointer"
+            />
           </div>
-          <input
-            type="text"
-            placeholder="Search titles, genres..."
-            onClick={() => router.push("/")}
-            className="w-full pl-10 pr-4 py-1.5 rounded-md bg-neutral-900/90 border border-neutral-800 text-sm placeholder-neutral-500 focus:outline-none focus:border-orange-500 focus:bg-neutral-900 transition duration-200 cursor-pointer"
-          />
+
+          {/* NETFLIX-STYLE PREMIUM TOP-RIGHT PROFILE BADGE */}
+          {currentProfile && (
+            <div className="relative group flex items-center">
+              <button 
+                onClick={handleSignOutAction}
+                className="flex items-center space-x-2 focus:outline-none cursor-pointer group"
+                title="Click to Switch Profile / Sign Out"
+              >
+                <div className="w-8 h-8 rounded bg-neutral-800 overflow-hidden border border-neutral-700 group-hover:border-orange-500 transition duration-200 shadow-md">
+                  <img 
+                    src={currentProfile.avatar_url} 
+                    alt={currentProfile.name} 
+                    className="w-full h-full object-cover group-hover:scale-105 transition duration-200"
+                  />
+                </div>
+                <span className="hidden lg:inline text-xs font-semibold text-neutral-400 group-hover:text-white transition max-w-[90px] truncate">
+                  {currentProfile.name}
+                </span>
+              </button>
+            </div>
+          )}
         </div>
       </header>
 

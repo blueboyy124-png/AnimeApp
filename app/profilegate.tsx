@@ -9,7 +9,8 @@ interface ProfileGateProps {
 }
 
 export default function ProfileGate({ children, onProfileActive }: ProfileGateProps) {
-  const [profiles, setProfiles] = useState<SupabaseProfile[]>([]);
+  // Device-specific profiles (only profiles that have interacted with this browser)
+  const [localProfiles, setLocalProfiles] = useState<SupabaseProfile[]>([]);
   const [activeProfile, setActiveProfile] = useState<SupabaseProfile | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [actionLoading, setActionLoading] = useState<boolean>(false);
@@ -22,7 +23,6 @@ export default function ProfileGate({ children, onProfileActive }: ProfileGatePr
   const [avatarUrl, setAvatarUrl] = useState("");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  // Default Crunchyroll/Netflix style avatars if they don't pick one
   const defaultAvatars = [
     "https://upload.wikimedia.org/wikipedia/commons/0/0b/Netflix-avatar.png",
     "https://wallpapers.com/images/hd/netflix-profile-pictures-1000-x-1000-v71uokwvd1p6mcb5.jpg",
@@ -31,48 +31,85 @@ export default function ProfileGate({ children, onProfileActive }: ProfileGatePr
   ];
 
   useEffect(() => {
-    fetchProfilesFromSupabase();
+    loadDeviceProfiles();
   }, []);
 
-  const fetchProfilesFromSupabase = async () => {
+  // Reads profiles previously authorized on this specific device browser registry
+  const loadDeviceProfiles = async () => {
     setLoading(true);
     setErrorMsg(null);
     try {
-      const { data, error } = await supabase
-        .from("profiles")
-        .select("*")
-        .order("name", { ascending: true });
+      const savedProfilesJson = localStorage.getItem("streamanime_device_profiles");
+      const deviceProfileList: SupabaseProfile[] = savedProfilesJson ? JSON.parse(savedProfilesJson) : [];
+      
+      if (deviceProfileList.length > 0) {
+        // Hydrate and sync latest database info for just these local tracking entries
+        const targetIds = deviceProfileList.map(p => p.id);
+        const { data, error } = await supabase
+          .from("profiles")
+          .select("*")
+          .in("id", targetIds);
 
-      if (error) throw error;
-
-      if (data) {
-        setProfiles(data);
-        
-        // Auto-login if id exists in local memory
-        const savedId = localStorage.getItem("streamanime_active_profile_id");
-        if (savedId) {
-          const matched = data.find((p) => p.id === savedId);
+        if (!error && data) {
+          setLocalProfiles(data);
+          localStorage.setItem("streamanime_device_profiles", JSON.stringify(data));
+          
+          // Auto-login active profile session if it exists
+          const activeId = localStorage.getItem("streamanime_active_profile_id");
+          const matched = data.find((p) => p.id === activeId);
           if (matched) {
             handleSelectProfile(matched);
+            setLoading(false);
+            return;
           }
+        } else {
+          setLocalProfiles(deviceProfileList);
         }
       }
-    } catch (err: any) {
-      console.error("Supabase Error:", err);
-      setErrorMsg("Failed to communicate with database engine.");
+
+      // Check if an isolated active profile ID exists without a populated device list layout fallback
+      const activeId = localStorage.getItem("streamanime_active_profile_id");
+      if (activeId && localProfiles.length === 0) {
+        const { data } = await supabase.from("profiles").select("*").eq("id", activeId).single();
+        if (data) {
+          saveProfileToDeviceList(data);
+          handleSelectProfile(data);
+        }
+      }
+    } catch (err) {
+      console.error("Error synchronizing local device lists:", err);
     } finally {
       setLoading(false);
     }
   };
 
+  // Track profile meta parameters inside local storage to construct local device index list
+  const saveProfileToDeviceList = (profile: SupabaseProfile) => {
+    const savedProfilesJson = localStorage.getItem("streamanime_device_profiles");
+    let currentList: SupabaseProfile[] = savedProfilesJson ? JSON.parse(savedProfilesJson) : [];
+    
+    // Remove duplicates
+    currentList = currentList.filter(p => p.id !== profile.id);
+    currentList.unshift(profile); // Move most recent login to front
+    
+    localStorage.setItem("streamanime_device_profiles", JSON.stringify(currentList));
+    setLocalProfiles(currentList);
+  };
+
   const handleSelectProfile = (profile: SupabaseProfile) => {
     localStorage.setItem("streamanime_active_profile_id", profile.id);
-    // Mirror standard raw database sync history arrays if available
-    if (profile.recent_episodes && Array.isArray(profile.recent_episodes)) {
+    
+    // Core Watch History Restoration Layer
+    // Prioritize Cloud database metrics, fallback safely to existing local cache records
+    if (profile.recent_episodes && Array.isArray(profile.recent_episodes) && profile.recent_episodes.length > 0) {
       localStorage.setItem("streamanime_watch_history", JSON.stringify(profile.recent_episodes));
     } else {
-      localStorage.setItem("streamanime_watch_history", "[]");
+      const existingLocalHistory = localStorage.getItem("streamanime_watch_history");
+      if (!existingLocalHistory || existingLocalHistory === "[]") {
+        localStorage.setItem("streamanime_watch_history", "[]");
+      }
     }
+
     setActiveProfile(profile);
     onProfileActive(profile);
   };
@@ -83,7 +120,6 @@ export default function ProfileGate({ children, onProfileActive }: ProfileGatePr
 
     setActionLoading(true);
     setErrorMsg(null);
-
     const chosenAvatar = avatarUrl.trim() || defaultAvatars[Math.floor(Math.random() * defaultAvatars.length)];
 
     try {
@@ -96,36 +132,45 @@ export default function ProfileGate({ children, onProfileActive }: ProfileGatePr
       if (error) throw error;
 
       if (data) {
-        // Clear fields
         setUsername("");
-        setAvatarUrl("");
-        // Reload list and enter app directly
-        await fetchProfilesFromSupabase();
+        avatarUrl && setAvatarUrl("");
+        saveProfileToDeviceList(data);
         handleSelectProfile(data);
       }
     } catch (err: any) {
-      setErrorMsg(err.message || "Could not register new account row.");
+      setErrorMsg(err.message || "Could not register new profile account.");
     } finally {
       setActionLoading(false);
     }
   };
 
-  const handleSignInMock = async (e: FormEvent) => {
+  const handleSignInWithUsername = async (e: FormEvent) => {
     e.preventDefault();
     if (!username.trim()) return;
 
     setActionLoading(true);
     setErrorMsg(null);
 
-    // Matches profile rows by name instantly for local setup convenience
-    const foundProfile = profiles.find(
-      (p) => p.name.toLowerCase() === username.trim().toLowerCase()
-    );
+    try {
+      // Secure exact matches directly against backend schema rows
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("*")
+        .ilike("name", username.trim())
+        .maybeSingle();
 
-    if (foundProfile) {
-      handleSelectProfile(foundProfile);
-    } else {
-      setErrorMsg("Account name not found. Check spelling or select 'Create an account'.");
+      if (error) throw error;
+
+      if (data) {
+        setUsername("");
+        saveProfileToDeviceList(data);
+        handleSelectProfile(data);
+      } else {
+        setErrorMsg("Username profile not found. Please verify spelling or register a new account.");
+      }
+    } catch (err: any) {
+      setErrorMsg("Connection error encountered querying profile registry.");
+    } finally {
       setActionLoading(false);
     }
   };
@@ -137,24 +182,21 @@ export default function ProfileGate({ children, onProfileActive }: ProfileGatePr
   return (
     <div className="fixed inset-0 z-[9999] bg-neutral-950 flex flex-col justify-center items-center text-neutral-100 overflow-y-auto font-sans antialiased selection:bg-orange-500 selection:text-white">
       
-      {/* BACKGROUND CINEMATIC AMBIENCE */}
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(244,117,33,0.08)_0%,transparent_65%)] pointer-events-none" />
       <div className="absolute inset-0 bg-black/40 backdrop-blur-[2px] pointer-events-none" />
 
-      {/* TOP HEADER LOGO */}
       <div className="absolute top-8 sm:top-12 left-4 right-4 text-center z-10 pointer-events-none">
         <h1 className="text-2xl sm:text-4xl font-black tracking-tighter text-orange-500 drop-shadow-md italic">
           STREAMANIME
         </h1>
       </div>
 
-      {/* MAIN CONTAINER PLATFORM CARD */}
       <div className="w-full max-w-md p-6 sm:p-10 bg-neutral-900/70 border border-neutral-800/80 rounded-xl shadow-2xl backdrop-blur-xl mx-4 my-20 relative z-10 transition-all duration-300">
         
         {loading ? (
           <div className="py-12 flex flex-col items-center justify-center space-y-4">
             <div className="w-8 h-8 border-[3px] border-orange-500 border-t-transparent rounded-full animate-spin" />
-            <p className="text-xs font-mono tracking-widest text-neutral-500 uppercase">Loading profiles...</p>
+            <p className="text-xs font-mono tracking-widest text-neutral-500 uppercase">Verifying local session profile data...</p>
           </div>
         ) : (
           <>
@@ -164,18 +206,22 @@ export default function ProfileGate({ children, onProfileActive }: ProfileGatePr
               </div>
             )}
 
-            {/* VIEW MODE 1: NETFLIX PROFILE WHO'S WATCHING SEPARATOR */}
+            {/* VIEW MODE 1: LOCAL DEVICE USERS DISPLAY ONLY */}
             {viewMode === "profile_select" && (
               <div className="space-y-8 text-center animate-fadeIn">
                 <h2 className="text-xl sm:text-2xl font-bold tracking-tight text-white drop-shadow">
                   Who's Watching?
                 </h2>
 
-                {profiles.length === 0 ? (
-                  <p className="text-sm text-neutral-400">No viewing profiles active yet.</p>
+                {localProfiles.length === 0 ? (
+                  <div className="py-6 px-4 bg-neutral-950/40 border border-neutral-800/40 rounded-lg max-w-xs mx-auto">
+                    <p className="text-xs text-neutral-400 leading-relaxed">
+                      No active device profiles found.<br />Sign in below or create a fresh identity.
+                    </p>
+                  </div>
                 ) : (
                   <div className="grid grid-cols-2 gap-4 max-w-xs mx-auto pt-2">
-                    {profiles.map((profile) => (
+                    {localProfiles.map((profile) => (
                       <button
                         key={profile.id}
                         onClick={() => handleSelectProfile(profile)}
@@ -199,35 +245,35 @@ export default function ProfileGate({ children, onProfileActive }: ProfileGatePr
                 <div className="pt-6 border-t border-neutral-800/60 flex flex-col space-y-3">
                   <button
                     onClick={() => setViewMode("sign_in")}
-                    className="w-full py-2.5 px-4 rounded bg-orange-500 hover:bg-orange-600 text-white text-xs font-bold uppercase tracking-wider transition active:scale-98 shadow-md"
+                    className="w-full py-2.5 px-4 rounded bg-orange-500 hover:bg-orange-600 text-white text-xs font-bold uppercase tracking-wider transition active:scale-98 shadow-md cursor-pointer"
                   >
-                    Manage / Sign In
+                    Sign In Existing Account
                   </button>
                   <button
                     onClick={() => setViewMode("create_account")}
-                    className="w-full py-2.5 px-4 rounded bg-neutral-800 hover:bg-neutral-750 text-neutral-300 text-xs font-bold uppercase tracking-wider border border-neutral-700/50 transition"
+                    className="w-full py-2.5 px-4 rounded bg-neutral-800 hover:bg-neutral-750 text-neutral-300 text-xs font-bold uppercase tracking-wider border border-neutral-700/50 transition cursor-pointer"
                   >
-                    Create Account
+                    Create New Account
                   </button>
                 </div>
               </div>
             )}
 
-            {/* VIEW MODE 2: CINEMATIC SIGN IN */}
+            {/* VIEW MODE 2: SIGN IN VIA DIRECT QUERY */}
             {viewMode === "sign_in" && (
               <div className="space-y-6 animate-fadeIn">
                 <div>
                   <h2 className="text-2xl font-extrabold text-white tracking-tight">Sign In</h2>
-                  <p className="text-xs text-neutral-400 mt-1">Access your saved custom dashboard instantly.</p>
+                  <p className="text-xs text-neutral-400 mt-1">Enter your username below to restore your profile.</p>
                 </div>
 
-                <form onSubmit={handleSignInMock} className="space-y-4 pt-2">
+                <form onSubmit={handleSignInWithUsername} className="space-y-4 pt-2">
                   <div className="space-y-1.5">
                     <label className="text-[11px] font-bold uppercase tracking-wider text-neutral-400">Account Username</label>
                     <input
                       type="text"
                       required
-                      placeholder="Enter username"
+                      placeholder="Type your exact username"
                       value={username}
                       onChange={(e) => setUsername(e.target.value)}
                       className="w-full p-3 rounded bg-neutral-950 border border-neutral-800 text-sm text-white placeholder-neutral-600 focus:outline-none focus:border-orange-500 transition duration-200"
@@ -237,32 +283,32 @@ export default function ProfileGate({ children, onProfileActive }: ProfileGatePr
                   <button
                     type="submit"
                     disabled={actionLoading}
-                    className="w-full mt-2 py-3 px-4 rounded bg-orange-500 hover:bg-orange-600 text-white text-xs font-bold uppercase tracking-wider transition active:scale-98 disabled:opacity-50"
+                    className="w-full mt-2 py-3 px-4 rounded bg-orange-500 hover:bg-orange-600 text-white text-xs font-bold uppercase tracking-wider transition active:scale-98 disabled:opacity-50 cursor-pointer"
                   >
-                    {actionLoading ? "Verifying..." : "Sign In"}
+                    {actionLoading ? "Locating Profile Row..." : "Sign In"}
                   </button>
                 </form>
 
                 <div className="pt-4 border-t border-neutral-800/60 flex flex-col sm:flex-row justify-between items-center gap-2 text-xs text-neutral-400">
-                  <button onClick={() => { setViewMode("profile_select"); setErrorMsg(null); }} className="hover:text-white transition">
+                  <button onClick={() => { setViewMode("profile_select"); setErrorMsg(null); setUsername(""); }} className="hover:text-white transition cursor-pointer">
                     &larr; Back to Profiles
                   </button>
                   <div className="flex space-x-1">
-                    <span>New here?</span>
-                    <button onClick={() => { setViewMode("create_account"); setErrorMsg(null); setUsername(""); }} className="text-orange-500 font-semibold hover:underline">
-                      Create an account
+                    <span>New profile?</span>
+                    <button onClick={() => { setViewMode("create_account"); setErrorMsg(null); setUsername(""); }} className="text-orange-500 font-semibold hover:underline cursor-pointer">
+                      Create account
                     </button>
                   </div>
                 </div>
               </div>
             )}
 
-            {/* VIEW MODE 3: CRUNCHYROLL STYLE ACCOUNT REGISTRATION */}
+            {/* VIEW MODE 3: CREATE ACCOUNT */}
             {viewMode === "create_account" && (
               <div className="space-y-6 animate-fadeIn">
                 <div>
                   <h2 className="text-2xl font-extrabold text-white tracking-tight">Create Account</h2>
-                  <p className="text-xs text-neutral-400 mt-1">Start tracking sync metrics across any video player page.</p>
+                  <p className="text-xs text-neutral-400 mt-1">Setup your watch profile identity.</p>
                 </div>
 
                 <form onSubmit={handleCreateAccount} className="space-y-4 pt-2">
@@ -271,7 +317,7 @@ export default function ProfileGate({ children, onProfileActive }: ProfileGatePr
                     <input
                       type="text"
                       required
-                      placeholder="e.g., AnimeFan99"
+                      placeholder="e.g., Luffy56"
                       value={username}
                       onChange={(e) => setUsername(e.target.value)}
                       className="w-full p-3 rounded bg-neutral-950 border border-neutral-800 text-sm text-white placeholder-neutral-600 focus:outline-none focus:border-orange-500 transition duration-200"
@@ -292,19 +338,19 @@ export default function ProfileGate({ children, onProfileActive }: ProfileGatePr
                   <button
                     type="submit"
                     disabled={actionLoading}
-                    className="w-full mt-2 py-3 px-4 rounded bg-orange-500 hover:bg-orange-600 text-white text-xs font-bold uppercase tracking-wider transition active:scale-98 disabled:opacity-50"
+                    className="w-full mt-2 py-3 px-4 rounded bg-orange-500 hover:bg-orange-600 text-white text-xs font-bold uppercase tracking-wider transition active:scale-98 disabled:opacity-50 cursor-pointer"
                   >
-                    {actionLoading ? "Provisioning Profile..." : "Create & Enter"}
+                    {actionLoading ? "Creating Profile..." : "Create & Enter"}
                   </button>
                 </form>
 
                 <div className="pt-4 border-t border-neutral-800/60 flex flex-col sm:flex-row justify-between items-center gap-2 text-xs text-neutral-400">
-                  <button onClick={() => { setViewMode("profile_select"); setErrorMsg(null); }} className="hover:text-white transition">
+                  <button onClick={() => { setViewMode("profile_select"); setErrorMsg(null); setUsername(""); }} className="hover:text-white transition cursor-pointer">
                     &larr; Back to Profiles
                   </button>
                   <div className="flex space-x-1">
-                    <span>Already have one?</span>
-                    <button onClick={() => { setViewMode("sign_in"); setErrorMsg(null); setUsername(""); }} className="text-orange-500 font-semibold hover:underline">
+                    <span>Have an account?</span>
+                    <button onClick={() => { setViewMode("sign_in"); setErrorMsg(null); setUsername(""); }} className="text-orange-500 font-semibold hover:underline cursor-pointer">
                       Log In
                     </button>
                   </div>
