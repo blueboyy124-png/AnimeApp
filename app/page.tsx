@@ -2,7 +2,8 @@
 
 import { useState, useEffect, ChangeEvent } from "react";
 import Link from "next/link";
-import AccountBar from "./accountbar";
+import ProfileGate from "./profilegate";
+import { supabase, SupabaseProfile } from "./utils/supabase";
 
 interface AnimeCard {
   id: number;
@@ -36,6 +37,8 @@ interface WatchHistoryItem {
 type FeedCategory = "trending" | "upcoming" | "recommendations" | "popular";
 
 export default function HomePage() {
+  const [currentProfile, setCurrentProfile] = useState<SupabaseProfile | null>(null);
+
   const [trending, setTrending] = useState<AnimeCard[]>([]);
   const [currentFeed, setCurrentFeed] = useState<AnimeCard[]>([]);
   const [activeCategory, setActiveCategory] = useState<FeedCategory>("trending");
@@ -106,6 +109,7 @@ export default function HomePage() {
 
   // Read Watch History client registry values and strip series duplicates
   useEffect(() => {
+    if (!currentProfile) return;
     try {
       const storedHistory = localStorage.getItem("streamanime_watch_history");
       if (storedHistory) {
@@ -125,11 +129,13 @@ export default function HomePage() {
         });
 
         setWatchHistory(uniqueSeriesHistory);
+      } else {
+        setWatchHistory([]);
       }
     } catch (e) {
       console.error("Failed executing client tracking history sync routine:", e);
     }
-  }, []);
+  }, [currentProfile]);
 
   // 4-Second Interval Automatic Rotator Engine for the top 5 Spotlight Shows
   useEffect(() => {
@@ -141,6 +147,27 @@ export default function HomePage() {
 
     return () => clearInterval(interval);
   }, [trending]);
+
+  // Sync and wipe profile metrics back up to Supabase cloud row directly
+  const handleClearHistory = async () => {
+    if (!currentProfile) return;
+    if (!confirm("Are you sure you want to clear your watch history?")) return;
+    
+    localStorage.setItem("streamanime_watch_history", "[]");
+    setWatchHistory([]);
+
+    await supabase
+      .from("profiles")
+      .update({ recent_episodes: [] })
+      .eq("id", currentProfile.id);
+  };
+
+  // Profile Log out / Account switcher activator
+  const handleSwitchProfile = () => {
+    localStorage.removeItem("streamanime_active_profile_id");
+    localStorage.removeItem("streamanime_watch_history");
+    window.location.reload();
+  };
 
   // Paginated search interacting directly with your local server endpoint
   const performSearchFetch = async (query: string, targetPage: number, appendMode: boolean) => {
@@ -230,51 +257,193 @@ export default function HomePage() {
   };
 
   return (
-    <main className="min-h-screen bg-neutral-950 text-neutral-100 font-sans antialiased selection:bg-orange-500 selection:text-white pb-20 overflow-x-hidden">
-      
-      {/* GLOBAL NAVIGATION HEADER */}
-      <header className="fixed top-0 inset-x-0 h-16 bg-black/80 backdrop-blur-md z-50 flex items-center justify-between px-4 sm:px-6 md:px-12 border-b border-neutral-900/40">
-        <div className="flex items-center space-x-4 md:space-x-12 min-w-0">
-          <button 
-            onClick={() => { setActiveCategory("trending"); setSearchQuery(""); }} 
-            className="text-xl md:text-2xl font-black tracking-tighter text-orange-500 hover:opacity-90 transition text-left cursor-pointer flex-shrink-0"
-          >
-            STREAMANIME
-          </button>
-          
-          {/* Hide navigation paths on small viewport frames (Will handle mobile navigation shelf next) */}
-          <nav className="hidden lg:flex items-center space-x-6 xl:space-x-8 text-sm font-medium text-neutral-400 flex-shrink-0">
+    <ProfileGate onProfileActive={(profile) => setCurrentProfile(profile)}>
+      <main className="min-h-screen bg-neutral-950 text-neutral-100 font-sans antialiased selection:bg-orange-500 selection:text-white pb-20 overflow-x-hidden">
+        
+        {/* GLOBAL NAVIGATION HEADER */}
+        <header className="fixed top-0 inset-x-0 h-16 bg-black/80 backdrop-blur-md z-50 flex items-center justify-between px-4 sm:px-6 md:px-12 border-b border-neutral-900/40">
+          <div className="flex items-center space-x-4 md:space-x-12 min-w-0">
             <button 
               onClick={() => { setActiveCategory("trending"); setSearchQuery(""); }} 
-              className={`transition cursor-pointer ${activeCategory === "trending" && !isSearching ? "text-neutral-100 font-bold" : "hover:text-neutral-300"}`}
+              className="text-xl md:text-2xl font-black tracking-tighter text-orange-500 hover:opacity-90 transition text-left cursor-pointer flex-shrink-0"
             >
-              Home
+              STREAMANIME
             </button>
-            <button 
-              onClick={() => { setActiveCategory("upcoming"); setSearchQuery(""); }} 
-              className={`transition cursor-pointer ${activeCategory === "upcoming" && !isSearching ? "text-neutral-100 font-bold" : "hover:text-neutral-300"}`}
-            >
-              Upcoming
-            </button>
-            <button 
-              onClick={() => { setActiveCategory("recommendations"); setSearchQuery(""); }} 
-              className={`transition cursor-pointer ${activeCategory === "recommendations" && !isSearching ? "text-neutral-100 font-bold" : "hover:text-neutral-300"}`}
-            >
-              Recommendations
-            </button>
-            <button 
-              onClick={() => { setActiveCategory("popular"); setSearchQuery(""); }} 
-              className={`transition cursor-pointer ${activeCategory === "popular" && !isSearching ? "text-neutral-100 font-bold" : "hover:text-neutral-300"}`}
-            >
-              Popular
-            </button>
-          </nav>
+            
+            {/* Desktop Navigation buttons — completely hidden on mobile viewports */}
+            <nav className="hidden lg:flex items-center space-x-6 xl:space-x-8 text-sm font-medium text-neutral-400 flex-shrink-0">
+              <button 
+                onClick={() => { setActiveCategory("trending"); setSearchQuery(""); }} 
+                className={`transition cursor-pointer ${activeCategory === "trending" && !isSearching ? "text-neutral-100 font-bold" : "hover:text-neutral-300"}`}
+              >
+                Home
+              </button>
+              <button 
+                onClick={() => { setActiveCategory("upcoming"); setSearchQuery(""); }} 
+                className={`transition cursor-pointer ${activeCategory === "upcoming" && !isSearching ? "text-neutral-100 font-bold" : "hover:text-neutral-300"}`}
+              >
+                Upcoming
+              </button>
+              <button 
+                onClick={() => { setActiveCategory("recommendations"); setSearchQuery(""); }} 
+                className={`transition cursor-pointer ${activeCategory === "recommendations" && !isSearching ? "text-neutral-100 font-bold" : "hover:text-neutral-300"}`}
+              >
+                Recommendations
+              </button>
+              <button 
+                onClick={() => { setActiveCategory("popular"); setSearchQuery(""); }} 
+                className={`transition cursor-pointer ${activeCategory === "popular" && !isSearching ? "text-neutral-100 font-bold" : "hover:text-neutral-300"}`}
+              >
+                Popular
+              </button>
+            </nav>
+          </div>
+
+          {/* CONTROLS AREA: DESKTOP SEARCH DECK + NETFLIX AVATAR CHANGER */}
+          <div className="flex items-center space-x-3 sm:space-x-4 flex-shrink-0 ml-auto">
+            {/* SEARCH DECK INPUT FRAME — Only visible on wider displays, falls back to structural top block on mobile */}
+            <div className="relative max-w-xs w-36 xs:w-40 md:w-48 lg:w-64 hidden sm:block">
+              <div className="absolute inset-y-0 left-3 flex items-center pointer-events-none">
+                <img 
+                  src="/Assets/search-icon.png" 
+                  alt="Search" 
+                  className="w-4 h-4 object-contain invert brightness-200 contrast-200 opacity-90"
+                />
+              </div>
+              <input
+                type="text"
+                placeholder="Search titles..."
+                value={searchQuery}
+                onChange={handleSearchChange}
+                className="w-full pl-10 pr-4 py-1.5 rounded-md bg-neutral-900/90 border border-neutral-800 text-sm placeholder-neutral-500 focus:outline-none focus:border-orange-500 focus:bg-neutral-900 transition duration-200"
+              />
+            </div>
+
+            {/* NETFLIX-STYLE COMPACT AVATAR HANDLER */}
+            {currentProfile && (
+              <button
+                onClick={handleSwitchProfile}
+                className="flex items-center space-x-2 p-1 rounded-md hover:bg-neutral-900 transition focus:outline-none group cursor-pointer"
+                title="Switch User Profile Account"
+              >
+                <div className="w-8 h-8 rounded overflow-hidden border border-neutral-800 group-hover:border-orange-500 transition">
+                  <img src={currentProfile.avatar_url} alt={currentProfile.name} className="w-full h-full object-cover bg-neutral-800" />
+                </div>
+                <span className="hidden md:inline text-xs font-semibold text-neutral-400 group-hover:text-neutral-200 transition">
+                  {currentProfile.name}
+                </span>
+              </button>
+            )}
+          </div>
+        </header>
+
+        {/* MOBILE CATEGORY SELECTOR BOTTOM FIXED NAVIGATION BAR */}
+        <div className="lg:hidden fixed bottom-0 inset-x-0 h-14 bg-neutral-950/95 backdrop-blur-md border-t border-neutral-900/60 z-50 flex items-center justify-around text-[11px] font-medium text-neutral-400 px-2">
+          <button 
+            onClick={() => { setActiveCategory("trending"); setSearchQuery(""); window.scrollTo({ top: 0, behavior: 'smooth' }); }} 
+            className={`flex flex-col items-center space-y-0.5 ${activeCategory === "trending" && !isSearching ? "text-orange-500 font-bold" : ""}`}
+          >
+            <span>Home</span>
+          </button>
+          <button 
+            onClick={() => { setActiveCategory("upcoming"); setSearchQuery(""); window.scrollTo({ top: 0, behavior: 'smooth' }); }} 
+            className={`flex flex-col items-center space-y-0.5 ${activeCategory === "upcoming" && !isSearching ? "text-orange-500 font-bold" : ""}`}
+          >
+            <span>Upcoming</span>
+          </button>
+          <button 
+            onClick={() => { setActiveCategory("recommendations"); setSearchQuery(""); window.scrollTo({ top: 0, behavior: 'smooth' }); }} 
+            className={`flex flex-col items-center space-y-0.5 ${activeCategory === "recommendations" && !isSearching ? "text-orange-500 font-bold" : ""}`}
+          >
+            <span>Suggested</span>
+          </button>
+          <button 
+            onClick={() => { setActiveCategory("popular"); setSearchQuery(""); window.scrollTo({ top: 0, behavior: 'smooth' }); }} 
+            className={`flex flex-col items-center space-y-0.5 ${activeCategory === "popular" && !isSearching ? "text-orange-500 font-bold" : ""}`}
+          >
+            <span>Popular</span>
+          </button>
         </div>
 
-        {/* CONTROLS AREA: SEARCH DECK + PROFILE SYNCHRONIZATION */}
-        <div className="flex items-center space-x-2 sm:space-x-4 flex-shrink-0">
-          {/* SEARCH DECK INPUT FRAME - Only visible on wider displays, falls back to a full bar below on mobile */}
-          <div className="relative max-w-xs w-40 md:w-48 lg:w-64 hidden sm:block">
+        {/* NETFLIX-STYLE FULL-WIDTH SPOTLIGHT SLIDER (TOP 1-5 ROTATOR) */}
+        {!isSearching && topFiveTrending.length > 0 && (
+          <section className="relative w-full h-[60vh] sm:h-[75vh] md:h-[85vh] bg-black overflow-hidden pt-16">
+            
+            <div 
+              className="w-full h-full flex transition-transform duration-700 ease-in-out"
+              style={{ transform: `translateX(-${activeHeroIndex * 100}%)` }}
+            >
+              {topFiveTrending.map((show, index) => (
+                <div 
+                  key={show.id} 
+                  className="relative w-full h-full flex-shrink-0 overflow-hidden"
+                >
+                  <img 
+                    src={show.bannerImage || show.coverImage?.extraLarge || show.coverImage?.large} 
+                    alt="Spotlight Artwork"
+                    className="absolute inset-0 w-full h-full object-cover object-center opacity-35"
+                  />
+                  
+                  <div className="absolute inset-0 bg-gradient-to-t from-neutral-950 via-neutral-950/30 to-transparent" />
+                  <div className="absolute inset-0 bg-gradient-to-r from-neutral-950 via-transparent to-transparent" />
+
+                  <div className="absolute inset-x-0 bottom-0 p-4 sm:p-8 md:p-16 space-y-3 md:space-y-4 z-10 max-w-3xl">
+                    <div className="flex items-center space-x-3.5">
+                      <span className="text-4xl md:text-6xl font-black text-orange-500 tracking-tighter italic select-none">
+                        #{index + 1}
+                      </span>
+                      <span className="text-[9px] md:text-[10px] font-bold tracking-widest text-neutral-200 uppercase bg-neutral-900/90 px-2.5 py-0.5 rounded border border-neutral-800">
+                        Spotlight
+                      </span>
+                    </div>
+
+                    <h2 className="text-xl sm:text-3xl md:text-5xl font-extrabold tracking-tight text-white leading-tight drop-shadow-md line-clamp-2">
+                      {show.title?.english || show.title?.romaji}
+                    </h2>
+                    
+                    <p className="text-[11px] md:text-sm text-neutral-300 max-w-xl line-clamp-2 sm:line-clamp-3 leading-relaxed drop-shadow">
+                      {cleanDescription(show.description)}
+                    </p>
+
+                    <div className="flex items-center space-x-3 pt-1 md:pt-3">
+                      <Link 
+                        href={`/anime/${show.id}`}
+                        className="bg-orange-500 hover:bg-orange-600 text-white font-semibold text-xs md:text-sm px-4 py-2 md:px-5 md:py-3 rounded transition-all flex items-center space-x-2 active:scale-95 shadow-lg"
+                      >
+                        <img 
+                          src="/Assets/play-button.png" 
+                          alt="Play" 
+                          className="w-3.5 h-3.5 md:w-5 md:h-5 object-contain brightness-200"
+                        />
+                        <span>Watch Now</span>
+                      </Link>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="absolute bottom-6 right-4 sm:right-8 z-20 flex items-center space-x-2">
+              {topFiveTrending.map((_, dotIdx) => (
+                <button
+                  key={dotIdx}
+                  onClick={() => setActiveHeroIndex(dotIdx)}
+                  className={`h-1.5 transition-all duration-300 rounded-full ${
+                    dotIdx === activeHeroIndex ? "w-6 bg-orange-500" : "w-1.5 bg-neutral-600 hover:bg-neutral-400"
+                  }`}
+                />
+              ))}
+            </div>
+
+            <div className="absolute bottom-0 inset-x-0 h-20 bg-gradient-to-t from-neutral-950 to-transparent pointer-events-none z-10" />
+          </section>
+        )}
+
+        {/* COMPONENT BODY TRACK LISTINGS */}
+        <div className={`px-4 sm:px-6 md:px-12 space-y-10 md:space-y-12 ${!isSearching && topFiveTrending.length > 0 ? "mt-6 md:mt-12 relative z-20" : "pt-20 md:pt-24"}`}>
+          
+          {/* Mobile Input Container — visible cleanly on small viewports */}
+          <div className="sm:hidden block relative">
             <div className="absolute inset-y-0 left-3 flex items-center pointer-events-none">
               <img 
                 src="/Assets/search-icon.png" 
@@ -284,257 +453,129 @@ export default function HomePage() {
             </div>
             <input
               type="text"
-              placeholder="Search titles..."
+              placeholder="Search anime..."
               value={searchQuery}
               onChange={handleSearchChange}
-              className="w-full pl-10 pr-4 py-1.5 rounded-md bg-neutral-900/90 border border-neutral-800 text-sm placeholder-neutral-500 focus:outline-none focus:border-orange-500 focus:bg-neutral-900 transition duration-200"
+              className="w-full pl-10 pr-4 p-2.5 rounded-lg bg-neutral-900 border border-neutral-800 text-white text-sm focus:outline-none focus:border-orange-500"
             />
           </div>
 
-          {/* INTEGRATED CLOUD HUB SYNC COMPONENT */}
-          <AccountBar />
-        </div>
-      </header>
-
-      {/* MOBILE CATEGORY SELECTOR NAVIGATION BAR */}
-      <div className="lg:hidden fixed bottom-0 inset-x-0 h-14 bg-neutral-950/95 backdrop-blur-md border-t border-neutral-900/60 z-50 flex items-center justify-around text-[11px] font-medium text-neutral-400 px-2">
-        <button 
-          onClick={() => { setActiveCategory("trending"); setSearchQuery(""); window.scrollTo({ top: 0, behavior: 'smooth' }); }} 
-          className={`flex flex-col items-center space-y-0.5 ${activeCategory === "trending" && !isSearching ? "text-orange-500 font-bold" : ""}`}
-        >
-          <span>Home</span>
-        </button>
-        <button 
-          onClick={() => { setActiveCategory("upcoming"); setSearchQuery(""); window.scrollTo({ top: 0, behavior: 'smooth' }); }} 
-          className={`flex flex-col items-center space-y-0.5 ${activeCategory === "upcoming" && !isSearching ? "text-orange-500 font-bold" : ""}`}
-        >
-          <span>Upcoming</span>
-        </button>
-        <button 
-          onClick={() => { setActiveCategory("recommendations"); setSearchQuery(""); window.scrollTo({ top: 0, behavior: 'smooth' }); }} 
-          className={`flex flex-col items-center space-y-0.5 ${activeCategory === "recommendations" && !isSearching ? "text-orange-500 font-bold" : ""}`}
-        >
-          <span>Suggested</span>
-        </button>
-        <button 
-          onClick={() => { setActiveCategory("popular"); setSearchQuery(""); window.scrollTo({ top: 0, behavior: 'smooth' }); }} 
-          className={`flex flex-col items-center space-y-0.5 ${activeCategory === "popular" && !isSearching ? "text-orange-500 font-bold" : ""}`}
-        >
-          <span>Popular</span>
-        </button>
-      </div>
-
-      {/* NETFLIX-STYLE FULL-WIDTH SPOTLIGHT SLIDER (TOP 1-5 ROTATOR) */}
-      {!isSearching && topFiveTrending.length > 0 && (
-        <section className="relative w-full h-[60vh] sm:h-[75vh] md:h-[85vh] bg-black overflow-hidden pt-16">
-          
-          <div 
-            className="w-full h-full flex transition-transform duration-700 ease-in-out"
-            style={{ transform: `translateX(-${activeHeroIndex * 100}%)` }}
-          >
-            {topFiveTrending.map((show, index) => (
-              <div 
-                key={show.id} 
-                className="relative w-full h-full flex-shrink-0 overflow-hidden"
-              >
-                <img 
-                  src={show.bannerImage || show.coverImage?.extraLarge || show.coverImage?.large} 
-                  alt="Spotlight Artwork"
-                  className="absolute inset-0 w-full h-full object-cover object-center opacity-35"
-                />
-                
-                <div className="absolute inset-0 bg-gradient-to-t from-neutral-950 via-neutral-950/30 to-transparent" />
-                <div className="absolute inset-0 bg-gradient-to-r from-neutral-950 via-transparent to-transparent" />
-
-                <div className="absolute inset-x-0 bottom-0 p-4 sm:p-8 md:p-16 space-y-3 md:space-y-4 z-10 max-w-3xl">
-                  <div className="flex items-center space-x-3.5">
-                    <span className="text-4xl md:text-6xl font-black text-orange-500 tracking-tighter italic select-none">
-                      #{index + 1}
-                    </span>
-                    <span className="text-[9px] md:text-[10px] font-bold tracking-widest text-neutral-200 uppercase bg-neutral-900/90 px-2.5 py-0.5 rounded border border-neutral-800">
-                      Spotlight
-                    </span>
-                  </div>
-
-                  <h2 className="text-xl sm:text-3xl md:text-5xl font-extrabold tracking-tight text-white leading-tight drop-shadow-md line-clamp-2">
-                    {show.title?.english || show.title?.romaji}
-                  </h2>
-                  
-                  <p className="text-[11px] md:text-sm text-neutral-300 max-w-xl line-clamp-2 sm:line-clamp-3 leading-relaxed drop-shadow">
-                    {cleanDescription(show.description)}
-                  </p>
-
-                  <div className="flex items-center space-x-3 pt-1 md:pt-3">
-                    <Link 
-                      href={`/anime/${show.id}`}
-                      className="bg-orange-500 hover:bg-orange-600 text-white font-semibold text-xs md:text-sm px-4 py-2 md:px-5 md:py-3 rounded transition-all flex items-center space-x-2 active:scale-95 shadow-lg"
-                    >
-                      <img 
-                        src="/Assets/play-button.png" 
-                        alt="Play" 
-                        className="w-3.5 h-3.5 md:w-5 md:h-5 object-contain brightness-200"
-                      />
-                      <span>Watch Now</span>
-                    </Link>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-
-          <div className="absolute bottom-6 right-4 sm:right-8 z-20 flex items-center space-x-2">
-            {topFiveTrending.map((_, dotIdx) => (
-              <button
-                key={dotIdx}
-                onClick={() => setActiveHeroIndex(dotIdx)}
-                className={`h-1.5 transition-all duration-300 rounded-full ${
-                  dotIdx === activeHeroIndex ? "w-6 bg-orange-500" : "w-1.5 bg-neutral-600 hover:bg-neutral-400"
-                }`}
-              />
-            ))}
-          </div>
-
-          <div className="absolute bottom-0 inset-x-0 h-20 bg-gradient-to-t from-neutral-950 to-transparent pointer-events-none z-10" />
-        </section>
-      )}
-
-      {/* COMPONENT BODY TRACK LISTINGS */}
-      <div className={`px-4 sm:px-6 md:px-12 space-y-10 md:space-y-12 ${!isSearching && topFiveTrending.length > 0 ? "mt-6 md:mt-12 relative z-20" : "pt-20 md:pt-24"}`}>
-        
-        {/* Mobile Input Container - visible cleanly on small viewports */}
-        <div className="sm:hidden block relative">
-          <div className="absolute inset-y-0 left-3 flex items-center pointer-events-none">
-            <img 
-              src="/Assets/search-icon.png" 
-              alt="Search" 
-              className="w-4 h-4 object-contain invert brightness-200 contrast-200 opacity-90"
-            />
-          </div>
-          <input
-            type="text"
-            placeholder="Search anime..."
-            value={searchQuery}
-            onChange={handleSearchChange}
-            className="w-full pl-10 pr-4 p-2.5 rounded-lg bg-neutral-900 border border-neutral-800 text-white text-sm focus:outline-none focus:border-orange-500"
-          />
-        </div>
-
-        {/* WATCH HISTORY EXPANSION SHELF DECK */}
-        {!isSearching && watchHistory.length > 0 && (
-          <section className="space-y-4">
-            <div className="flex items-center justify-between border-b border-neutral-900 pb-3">
-              <h3 className="text-sm md:text-lg font-black uppercase tracking-widest text-orange-500">
-                Watch History
-              </h3>
-              <button 
-                onClick={() => { localStorage.removeItem("streamanime_watch_history"); setWatchHistory([]); }}
-                className="text-[10px] font-mono tracking-wider text-neutral-600 hover:text-red-400 uppercase transition cursor-pointer"
-              >
-                Clear Cache
-              </button>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
-              {watchHistory.map((item) => (
-                <Link
-                  key={item.anilistId}
-                  href={`/watch?provider=${item.provider}&anilistId=${item.anilistId}&category=${item.category}&slug=${encodeURIComponent(item.slug)}&epNum=${item.episodeNumber}`}
-                  className="group relative bg-neutral-900/30 border border-neutral-900 rounded overflow-hidden hover:border-neutral-700 transition duration-300 flex flex-col"
+          {/* WATCH HISTORY EXPANSION SHELF DECK */}
+          {!isSearching && watchHistory.length > 0 && (
+            <section className="space-y-4">
+              <div className="flex items-center justify-between border-b border-neutral-900 pb-3">
+                <h3 className="text-sm md:text-lg font-black uppercase tracking-widest text-orange-500">
+                  Watch History
+                </h3>
+                <button 
+                  onClick={handleClearHistory}
+                  className="text-[10px] font-mono tracking-wider text-neutral-600 hover:text-red-400 uppercase transition cursor-pointer"
                 >
-                  {/* IMAGE VIEW COMPONENT WRAPPER */}
-                  <div className="relative aspect-video w-full bg-neutral-950 overflow-hidden select-none">
-                    <img
-                      src={item.episodeImage}
-                      alt={item.animeTitle}
-                      className="w-full h-full object-cover group-hover:scale-102 transition duration-500"
-                      loading="lazy"
-                    />
-
-                    {/* Masking Layout Overlay Gradient */}
-                    <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent z-10" />
-
-                    {/* SPEC: EPISODE NUMBER OVERLAY ON BOTTOM LEFT */}
-                    <div className="absolute bottom-2 left-2 z-20 font-mono font-black text-[10px] text-white bg-black/70 px-1.5 py-0.5 rounded border border-neutral-800/40">
-                      EP {item.episodeNumber}
-                    </div>
-
-                    {/* SPEC: RUNTIME TIMESTAMP RATIO STAMP ON BOTTOM RIGHT */}
-                    <div className="absolute bottom-2 right-2 z-20 font-mono text-[9px] text-neutral-300 bg-black/70 px-1.5 py-0.5 rounded border border-neutral-800/40">
-                      {formatSecondsToLabel(item.currentTime)} / {formatSecondsToLabel(item.duration)}
-                    </div>
-
-                    {/* SPEC: MINI PROGRESS TRACK SLIDER ANCHORED ON BOTTOM EDGE */}
-                    <div className="absolute bottom-0 inset-x-0 h-1 bg-orange-500/20 z-30">
-                      <div 
-                        className="h-full bg-orange-500 transition-all duration-300" 
-                        style={{ width: `${item.progressPercent}%` }}
-                      />
-                    </div>
-                  </div>
-
-                  {/* CAPTION INFO PANEL */}
-                  <div className="p-2.5 bg-neutral-900/10 flex-1 flex flex-col justify-center">
-                    <h4 className="font-bold text-xs text-neutral-200 truncate group-hover:text-orange-500 transition duration-200">
-                      {item.animeTitle}
-                    </h4>
-                  </div>
-                </Link>
-              ))}
-            </div>
-          </section>
-        )}
-
-        {/* SECTION FEED SEPARATOR */}
-        <section className="space-y-4 md:space-y-6">
-          <div className="flex items-center justify-between border-b border-neutral-900 pb-3">
-            <h3 className="text-sm md:text-lg font-bold uppercase tracking-widest text-neutral-200">
-              {getHeaderTitle()}
-            </h3>
-            {!isSearching && (
-              <span className="text-[10px] md:text-[11px] text-neutral-600 font-mono">
-                {standardShowcaseList.length} titles
-              </span>
-            )}
-          </div>
-          
-          {/* CARDS DISPLAY ROW GRID */}
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-x-3 gap-y-6 md:gap-x-4 md:gap-y-8">
-            {(loading || (searchingLoading && searchPage === 1)) ? (
-              <div className="col-span-full py-20 flex flex-col items-center justify-center space-y-3">
-                <div className="w-5 h-5 border-2 border-orange-500 border-t-transparent rounded-full animate-spin" />
-                <p className="text-[10px] font-mono tracking-wider text-neutral-600 uppercase">
-                  Synchronizing core content repositories...
-                </p>
+                  Clear Profile Cache
+                </button>
               </div>
-            ) : Array.isArray(standardShowcaseList) && standardShowcaseList.length > 0 ? (
-              standardShowcaseList.map((anime) => (
-                <Link 
-                  href={`/anime/${anime.id}`} 
-                  key={anime.id} 
-                  className="group flex flex-col space-y-2 outline-none"
-                >
-                  <div className="relative aspect-[2/3] w-full overflow-hidden rounded bg-neutral-900 shadow-md border border-neutral-900 group-hover:border-neutral-700 group-focus:border-orange-500 transition-all duration-300">
-                    <img 
-                      src={anime.coverImage?.extraLarge || anime.coverImage?.large || "https://placehold.co/400x600?text=No+Cover"} 
-                      alt={anime.title?.english || anime.title?.romaji || "Anime Cover"}
-                      className="w-full h-full object-cover object-center transition duration-500 ease-out group-hover:scale-103 group-hover:brightness-90"
-                      loading="lazy"
-                    />
-                    
-                    <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-center justify-center">
-                      <div className="bg-orange-500/95 p-2.5 rounded-full scale-90 group-hover:scale-100 transition-transform duration-300 shadow-xl">
-                        <img 
-                          src="/Assets/play-button.png" 
-                          alt="Play" 
-                          className="w-4 h-4 object-contain brightness-200"
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+                {watchHistory.map((item) => (
+                  <Link
+                    key={item.anilistId}
+                    href={`/watch?provider=${item.provider}&anilistId=${item.anilistId}&category=${item.category}&slug=${encodeURIComponent(item.slug)}&epNum=${item.episodeNumber}`}
+                    className="group relative bg-neutral-900/30 border border-neutral-900 rounded overflow-hidden hover:border-neutral-700 transition duration-300 flex flex-col"
+                  >
+                    {/* IMAGE VIEW COMPONENT WRAPPER */}
+                    <div className="relative aspect-video w-full bg-neutral-950 overflow-hidden select-none">
+                      <img
+                        src={item.episodeImage}
+                        alt={item.animeTitle}
+                        className="w-full h-full object-cover group-hover:scale-102 transition duration-500"
+                        loading="lazy"
+                      />
+
+                      {/* Masking Layout Overlay Gradient */}
+                      <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent z-10" />
+
+                      {/* EPISODE NUMBER OVERLAY ON BOTTOM LEFT */}
+                      <div className="absolute bottom-2 left-2 z-20 font-mono font-black text-[10px] text-white bg-black/70 px-1.5 py-0.5 rounded border border-neutral-800/40">
+                        EP {item.episodeNumber}
+                      </div>
+
+                      {/* RUNTIME TIMESTAMP RATIO STAMP ON BOTTOM RIGHT */}
+                      <div className="absolute bottom-2 right-2 z-20 font-mono text-[9px] text-neutral-300 bg-black/70 px-1.5 py-0.5 rounded border border-neutral-800/40">
+                        {formatSecondsToLabel(item.currentTime)} / {formatSecondsToLabel(item.duration)}
+                      </div>
+
+                      {/* MINI PROGRESS TRACK SLIDER ANCHORED ON BOTTOM EDGE */}
+                      <div className="absolute bottom-0 inset-x-0 h-1 bg-orange-500/20 z-30">
+                        <div 
+                          className="h-full bg-orange-500 transition-all duration-300" 
+                          style={{ width: `${item.progressPercent}%` }}
                         />
                       </div>
                     </div>
-                  </div>
 
-                  <div className="px-0.5 space-y-0.5">
-                    <h4 className="font-semibold text-xs md:text-sm leading-tight line-clamp-2 text-neutral-300 group-hover:text-orange-500 transition duration-200">
-                      {anime.title?.english || anime.title?.romaji || "Untitled Show"}
+                    {/* CAPTION INFO PANEL */}
+                    <div className="p-2.5 bg-neutral-900/10 flex-1 flex flex-col justify-center">
+                      <h4 className="font-bold text-xs text-neutral-200 truncate group-hover:text-orange-500 transition duration-200">
+                        {item.animeTitle}
+                      </h4>
+                    </div>
+                  </Link>
+                ))}
+              </div>
+            </section>
+          )}
+
+          {/* SECTION FEED SEPARATOR */}
+          <section className="space-y-4 md:space-y-6">
+            <div className="flex items-center justify-between border-b border-neutral-900 pb-3">
+              <h3 className="text-sm md:text-lg font-bold uppercase tracking-widest text-neutral-200">
+                {getHeaderTitle()}
+              </h3>
+              {!isSearching && (
+                <span className="text-[10px] md:text-[11px] text-neutral-600 font-mono">
+                  {standardShowcaseList.length} titles
+                </span>
+              )}
+            </div>
+            
+            {/* CARDS DISPLAY ROW GRID */}
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-x-3 gap-y-6 md:gap-x-4 md:gap-y-8">
+              {(loading || (searchingLoading && searchPage === 1)) ? (
+                <div className="col-span-full py-20 flex flex-col items-center justify-center space-y-3">
+                  <div className="w-5 h-5 border-2 border-orange-500 border-t-transparent rounded-full animate-spin" />
+                  <p className="text-[10px] font-mono tracking-wider text-neutral-600 uppercase">
+                    Synchronizing core content repositories...
+                  </p>
+                </div>
+              ) : Array.isArray(standardShowcaseList) && standardShowcaseList.length > 0 ? (
+                standardShowcaseList.map((anime) => (
+                  <Link 
+                    href={`/anime/${anime.id}`} 
+                    key={anime.id} 
+                    className="group flex flex-col space-y-2 outline-none"
+                  >
+                    <div className="relative aspect-[2/3] w-full overflow-hidden rounded bg-neutral-900 shadow-md border border-neutral-900 group-hover:border-neutral-700 group-focus:border-orange-500 transition-all duration-300">
+                      <img 
+                        src={anime.coverImage?.extraLarge || anime.coverImage?.large || "https://placehold.co/400x600?text=No+Cover"} 
+                        alt={anime.title?.english || anime.title?.romaji || "Anime Cover"}
+                        className="w-full h-full object-cover object-center transition duration-500 ease-out group-hover:scale-103 group-hover:brightness-90"
+                        loading="lazy"
+                      />
+                      
+                      <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-center justify-center">
+                        <div className="bg-orange-500/95 p-2.5 rounded-full scale-90 group-hover:scale-100 transition-transform duration-300 shadow-xl">
+                          <img 
+                            src="/Assets/play-button.png" 
+                            alt="Play" 
+                            className="w-4 h-4 object-contain brightness-200"
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="px-0.5 space-y-0.5">
+                      <h4 className="font-semibold text-xs md:text-sm leading-tight line-clamp-2 text-neutral-300 group-hover:text-orange-500 transition duration-200">
+                        {anime.title?.english || anime.title?.romaji || "Untitled Show"}
                     </h4>
                     <div className="text-[9px] md:text-[10px] font-mono text-neutral-600 tracking-tight font-medium uppercase">
                       Premium Feed
@@ -573,5 +614,6 @@ export default function HomePage() {
 
       </div>
     </main>
-  );
+  </ProfileGate>
+);
 }
