@@ -94,6 +94,9 @@ function WatchContent() {
 
   const [isMounted, setIsMounted] = useState(false);
 
+  // Fullscreen crop-to-fill state (removes letterbox black bars by cropping sides)
+  const [isCropFill, setIsCropFill] = useState(false);
+
   const urlProvider = searchParams.get("provider");
   const anilistId   = searchParams.get("anilistId") ?? "0";
   const category    = searchParams.get("category");
@@ -348,6 +351,10 @@ function WatchContent() {
     const next = !autonext;
     setAutonext(next);
     localStorage.setItem("streamanime_autonext", String(next));
+  };
+
+  const toggleCropFill = () => {
+    setIsCropFill((prev) => !prev);
   };
 
   const handleSignOutAction = () => {
@@ -924,7 +931,7 @@ function WatchContent() {
           background: transparent !important;
         }
         
-        /* 48x48px Clean Interactive Mobile Touch Box Extension */
+        /* 64x64px Clean Interactive Mobile Touch Box Extension */
         .mobile-expand-hitbox {
           position: relative;
         }
@@ -934,10 +941,10 @@ function WatchContent() {
           top: 50%;
           left: 50%;
           transform: translate(-50%, -50%);
-          min-width: 48px;
-          min-height: 48px;
-          width: 140%;
-          height: 140%;
+          min-width: 64px;
+          min-height: 64px;
+          width: 180%;
+          height: 180%;
           cursor: pointer;
         }
 
@@ -1059,7 +1066,7 @@ function WatchContent() {
             controls={false}
             playsInline
             webkit-playsinline="true"
-            className="w-full h-full object-contain cursor-pointer bg-black"
+            className={`w-full h-full cursor-pointer bg-black ${isCropFill ? "object-cover" : "object-contain"}`}
           />
 
           {/* PREMIUM TOP HUD OVERLAY PANEL — Title left, Volume + CC right (fullscreen removed) */}
@@ -1249,7 +1256,7 @@ function WatchContent() {
 
               {/* CENTER: Action buttons — only visible in fullscreen, absolutely centered */}
               {isFullscreen && (
-                <div className="absolute left-1/2 -translate-x-1/2 flex items-center bg-neutral-900/90 border border-neutral-800/80 p-1.5 rounded-xl space-x-1.5 shadow-xl backdrop-blur-md">
+                <div className="absolute left-1/2 -translate-x-1/2 flex items-center space-x-1.5">
                   <label className="mobile-expand-hitbox flex items-center space-x-2 px-3 py-1.5 rounded-lg hover:bg-neutral-800/40 cursor-pointer select-none group text-xs font-mono text-neutral-300">
                     <input
                       type="checkbox" checked={autoplay} onChange={toggleAutoplayState}
@@ -1282,6 +1289,16 @@ function WatchContent() {
                     className="mobile-expand-hitbox px-3.5 py-1.5 rounded-lg bg-orange-500 hover:bg-orange-600 disabled:bg-neutral-950 text-white disabled:text-neutral-600 border border-orange-400/20 disabled:border-neutral-800/40 font-mono font-bold text-[10px] tracking-wider uppercase transition active:scale-95 shadow-md flex items-center gap-1"
                   >
                     Next Ep &rarr;
+                  </button>
+
+                  <div className="w-px h-4 bg-neutral-800" />
+
+                  <button
+                    onClick={toggleCropFill}
+                    className={`mobile-expand-hitbox px-3 py-1.5 rounded-lg font-mono font-bold text-[10px] tracking-wider uppercase transition active:scale-95 flex items-center gap-1 ${isCropFill ? "bg-orange-500 text-white" : "bg-neutral-900/60 text-neutral-300 hover:text-white"}`}
+                    title={isCropFill ? "Fit to Screen" : "Fill Screen"}
+                  >
+                    {isCropFill ? "Fill" : "Fit"}
                   </button>
                 </div>
               )}
