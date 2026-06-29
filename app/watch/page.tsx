@@ -287,6 +287,19 @@ function WatchContent() {
     };
   }, []);
 
+  // Lock body scroll when in custom CSS fullscreen; restore + jump to top on exit
+  useEffect(() => {
+    if (isFullscreen) {
+      document.body.style.overflow = "hidden";
+    } else {
+      document.body.style.overflow = "";
+      window.scrollTo({ top: 0, behavior: "instant" as ScrollBehavior });
+    }
+    return () => {
+      document.body.style.overflow = "";
+    };
+  }, [isFullscreen]);
+
   const handleCategoryChange = (target: "sub" | "dub") => {
     if (target === activeCategory) return;
     localStorage.setItem("streamanime_pref_lang", target);
@@ -1221,18 +1234,18 @@ function WatchContent() {
             </div>
 
             {/* DYNAMIC METRIC DISPATCH AND MULTI-MODE ACTION FOOTER */}
-            <div className="flex items-center justify-between pointer-events-auto">
-              {/* Left Segment: Standard Playback Session Timers */}
-              <div className="text-xs font-mono text-neutral-400 tracking-tight">
+            <div className="relative flex items-center pointer-events-auto">
+
+              {/* LEFT: Playback timers */}
+              <div className="text-xs font-mono text-neutral-400 tracking-tight shrink-0">
                 <span className="text-neutral-100 font-bold bg-neutral-900/60 px-2 py-1 rounded border border-neutral-800/40">{formatTime(currentTime)}</span>
                 <span className="mx-2 text-neutral-700">/</span>
                 <span>{formatTime(duration)}</span>
               </div>
 
-              {/* Right Segment */}
-              {isFullscreen ? (
-                /* FULLSCREEN EMBEDDED BUTTON SET */
-                <div className="flex items-center bg-neutral-900/90 border border-neutral-800/80 p-1.5 rounded-xl space-x-1.5 shadow-xl backdrop-blur-md">
+              {/* CENTER: Action buttons — only visible in fullscreen, absolutely centered */}
+              {isFullscreen && (
+                <div className="absolute left-1/2 -translate-x-1/2 flex items-center bg-neutral-900/90 border border-neutral-800/80 p-1.5 rounded-xl space-x-1.5 shadow-xl backdrop-blur-md">
                   <label className="mobile-expand-hitbox flex items-center space-x-2 px-3 py-1.5 rounded-lg hover:bg-neutral-800/40 cursor-pointer select-none group text-xs font-mono text-neutral-300">
                     <input
                       type="checkbox" checked={autoplay} onChange={toggleAutoplayState}
@@ -1267,21 +1280,22 @@ function WatchContent() {
                     Next Ep &rarr;
                   </button>
                 </div>
-              ) : (
-                /* FULLSCREEN ICON-ONLY BUTTON (no text) */
-                <button
-                  onClick={toggleFullscreen}
-                  className="mobile-expand-hitbox p-2 bg-neutral-900 hover:bg-neutral-800 border border-neutral-800 rounded-lg transition active:scale-95 shadow flex items-center justify-center"
-                  title="Enter Fullscreen"
-                >
-                  <img 
-                    src="/Assets/full-screen.png" 
-                    alt="Fullscreen"
-                    style={{ width: "14px", height: "14px" }}
-                    className="object-contain invert brightness-200 contrast-200"
-                  />
-                </button>
               )}
+
+              {/* RIGHT: Fullscreen toggle — always present (enter when normal, exit when fullscreen) */}
+              <button
+                onClick={toggleFullscreen}
+                className="mobile-expand-hitbox ml-auto p-2 bg-neutral-900 hover:bg-neutral-800 border border-neutral-800 rounded-lg transition active:scale-95 shadow flex items-center justify-center shrink-0"
+                title={isFullscreen ? "Exit Fullscreen" : "Enter Fullscreen"}
+              >
+                <img 
+                  src="/Assets/full-screen.png" 
+                  alt={isFullscreen ? "Exit Fullscreen" : "Enter Fullscreen"}
+                  style={{ width: "14px", height: "14px" }}
+                  className="object-contain invert brightness-200 contrast-200"
+                />
+              </button>
+
             </div>
           </div>
         </div>
