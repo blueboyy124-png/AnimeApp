@@ -287,6 +287,19 @@ function WatchContent() {
     };
   }, []);
 
+  // Lock body scroll when in custom CSS fullscreen; restore + jump to top on exit
+  useEffect(() => {
+    if (isFullscreen) {
+      document.body.style.overflow = "hidden";
+    } else {
+      document.body.style.overflow = "";
+      window.scrollTo({ top: 0, behavior: "instant" as ScrollBehavior });
+    }
+    return () => {
+      document.body.style.overflow = "";
+    };
+  }, [isFullscreen]);
+
   const handleCategoryChange = (target: "sub" | "dub") => {
     if (target === activeCategory) return;
     localStorage.setItem("streamanime_pref_lang", target);
@@ -1049,19 +1062,19 @@ function WatchContent() {
             className="w-full h-full object-contain cursor-pointer bg-black"
           />
 
-          {/* PREMIUM TOP HUD OVERLAY PANEL (Title + New Audio Tracks & Volumetric Slider) */}
+          {/* PREMIUM TOP HUD OVERLAY PANEL — Title left, Volume + CC right (fullscreen removed) */}
           <div 
-            className={`absolute top-0 inset-x-0 bg-gradient-to-b from-black/90 via-black/50 to-transparent p-4 sm:p-6 pb-14 z-30 transition-all duration-300 pointer-events-auto flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
-              showControls ? "opacity-100 translate-y-0" : "opacity-0 -translate-y-2 pointer-events-none"
+            className={`absolute top-0 inset-x-0 bg-gradient-to-b from-black/90 via-black/50 to-transparent p-4 sm:p-6 pb-14 z-30 transition-all duration-300 pointer-events-none flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
+              showControls ? "opacity-100 translate-y-0" : "opacity-0 -translate-y-2"
             }`}
           >
-            <div className="text-sm md:text-base font-bold text-neutral-100 tracking-wide drop-shadow-[0_2px_4px_rgba(0,0,0,0.9)] truncate max-w-xl">
+            <div className="text-sm md:text-base font-bold text-neutral-100 tracking-wide drop-shadow-[0_2px_4px_rgba(0,0,0,0.9)] truncate max-w-xl pointer-events-none">
               {epNum}. {episodeTitle || `Episode ${epNum}`}
             </div>
 
-            {/* Shifted rightwards via justify-end and tracking utilities */}
-            <div className="flex items-center space-x-6 self-end sm:self-auto justify-end ml-auto">
-              {/* Desktop & Mobile Responsive Top Volume Hud Block */}
+            {/* Volume + CC controls — shifted right after fullscreen removal */}
+            <div className="flex items-center space-x-4 self-end sm:self-auto justify-end ml-auto pointer-events-auto">
+              {/* Volume HUD Block */}
               <div className="flex items-center space-x-2 bg-black/40 backdrop-blur-md px-3 py-1.5 rounded-lg border border-neutral-800/40">
                 <button onClick={toggleMute} className="mobile-expand-hitbox text-[10px] font-mono font-bold text-neutral-400 hover:text-neutral-200 transition tracking-wider">
                   {isMuted ? "UNMUTE" : "VOLUME"}
@@ -1071,7 +1084,7 @@ function WatchContent() {
                   className="w-16 sm:w-20 h-1 bg-neutral-800 appearance-none cursor-pointer accent-orange-500 rounded-full" />
               </div>
 
-              {/* Dynamic Action Access Button standard layout */}
+              {/* CC Toggle Button */}
               <button
                 onClick={() => {
                   const nextMode = !captionsEnabled;
@@ -1095,32 +1108,19 @@ function WatchContent() {
                   className="object-contain"
                 />
               </button>
-
-              <button
-                onClick={toggleFullscreen}
-                className="mobile-expand-hitbox hover:scale-105 active:scale-95 flex items-center justify-center outline-none bg-black/40 border border-neutral-800/30 p-2 rounded-lg backdrop-blur-md transition duration-200"
-                title="Toggle Fullscreen"
-              >
-                <img 
-                  src="/Assets/full-screen.png" 
-                  alt="Fullscreen Toggle"
-                  style={{ width: "16px", height: "16px" }}
-                  className="object-contain invert brightness-200 contrast-200 opacity-100"
-                />
-              </button>
             </div>
           </div>
 
-          {/* CENTERED KINETIC CONTROLS PLATFORM - NO ROUNDED CIRCLE BACKGROUND BACKGROUND, LARGER SIZE */}
+          {/* CENTERED KINETIC CONTROLS PLATFORM — pointer-events-none on container, auto on each button */}
           <div 
-            className={`absolute inset-0 flex items-center justify-center z-30 transition-all duration-300 pointer-events-auto gap-8 sm:gap-14 ${
-              showControls ? "opacity-100 scale-100" : "opacity-0 scale-95 pointer-events-none"
+            className={`absolute inset-0 flex items-center justify-center z-30 transition-all duration-300 pointer-events-none gap-8 sm:gap-14 ${
+              showControls ? "opacity-100 scale-100" : "opacity-0 scale-95"
             }`}
           >
             {/* Rewind 10s Trigger */}
             <button
               onClick={() => skipSeconds(-10)}
-              className="mobile-expand-hitbox w-24 h-24 sm:w-28 sm:h-28 flex items-center justify-center bg-transparent text-white transition-all duration-200 transform hover:scale-110 active:scale-95 filter drop-shadow-[0_4px_12px_rgba(0,0,0,0.5)]"
+              className="pointer-events-auto mobile-expand-hitbox w-14 h-14 sm:w-16 sm:h-16 flex items-center justify-center rounded-full bg-black/50 hover:bg-black/70 border border-neutral-800/60 transition duration-200 group/btn transform hover:scale-110 active:scale-90 shadow-lg backdrop-blur-sm"
               title="Rewind 10 Seconds"
             >
               <img
@@ -1131,10 +1131,10 @@ function WatchContent() {
               />
             </button>
 
-            {/* Core Center Play / Pause Cluster - Enlarged + Transparent Minimalist Background Wrapper */}
+            {/* Core Center Play / Pause Cluster */}
             <button
               onClick={togglePlay}
-              className="mobile-expand-hitbox w-24 h-24 sm:w-28 sm:h-28 flex items-center justify-center bg-transparent text-white transition-all duration-200 transform hover:scale-110 active:scale-95 filter drop-shadow-[0_4px_12px_rgba(0,0,0,0.5)]"
+              className="pointer-events-auto mobile-expand-hitbox w-24 h-24 sm:w-28 sm:h-28 flex items-center justify-center bg-transparent text-white transition-all duration-200 transform hover:scale-110 active:scale-95 filter drop-shadow-[0_4px_12px_rgba(0,0,0,0.5)]"
               title={isPlaying ? "Pause" : "Play"}
             >
               <img
@@ -1152,7 +1152,7 @@ function WatchContent() {
             {/* Fast Forward 10s Trigger */}
             <button
               onClick={() => skipSeconds(10)}
-              className="mobile-expand-hitbox w-24 h-24 sm:w-28 sm:h-28 flex items-center justify-center bg-transparent text-white transition-all duration-200 transform hover:scale-110 active:scale-95 filter drop-shadow-[0_4px_12px_rgba(0,0,0,0.5)]"
+              className="pointer-events-auto mobile-expand-hitbox w-14 h-14 sm:w-16 sm:h-16 flex items-center justify-center rounded-full bg-black/50 hover:bg-black/70 border border-neutral-800/60 transition duration-200 group/btn transform hover:scale-110 active:scale-90 shadow-lg backdrop-blur-sm"
               title="Fast Forward 10 Seconds"
             >
               <img
@@ -1187,13 +1187,13 @@ function WatchContent() {
             </button>
           )}
 
-          {/* STREAM DECK BASE LOWER TIMELINEHUD BLOCK */}
-          <div className={`absolute inset-x-0 bottom-0 bg-gradient-to-t from-black via-black/90 to-transparent p-4 sm:p-6 pt-20 flex flex-col transition-all duration-300 z-20 pointer-events-auto ${
-            showControls ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4 pointer-events-none"
+          {/* STREAM DECK BASE LOWER TIMELINE HUD BLOCK */}
+          <div className={`absolute inset-x-0 bottom-0 bg-gradient-to-t from-black via-black/90 to-transparent p-4 sm:p-6 pt-20 flex flex-col transition-all duration-300 z-40 pointer-events-none ${
+            showControls ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4"
           } ${isFullscreen ? "space-y-5 pb-8" : "space-y-3"}`}>
             
             {/* TIMELINE TIMESTEP TRACKBAR CONTAINER */}
-            <div className="relative w-full flex items-center h-4 group/timeline">
+            <div className="relative w-full flex items-center h-4 group/timeline pointer-events-auto">
               <div className="absolute left-0 right-0 h-1.5 bg-neutral-800/60 rounded-full flex overflow-hidden">
                 {duration > 0 && skipIntervals.length > 0 ? (
                   (() => {
@@ -1238,18 +1238,18 @@ function WatchContent() {
             </div>
 
             {/* DYNAMIC METRIC DISPATCH AND MULTI-MODE ACTION FOOTER */}
-            <div className="flex items-center justify-between">
-              {/* Left Segment: Standard Playback Session Timers */}
-              <div className="text-xs font-mono text-neutral-400 tracking-tight">
+            <div className="relative flex items-center pointer-events-auto">
+
+              {/* LEFT: Playback timers */}
+              <div className="text-xs font-mono text-neutral-400 tracking-tight shrink-0">
                 <span className="text-neutral-100 font-bold bg-neutral-900/60 px-2 py-1 rounded border border-neutral-800/40">{formatTime(currentTime)}</span>
                 <span className="mx-2 text-neutral-700">/</span>
                 <span>{formatTime(duration)}</span>
               </div>
 
-              {/* Right Segment: Fullscreen Button or Expanded Controls Menu */}
-              {isFullscreen ? (
-                /* INJECTED INTEGRATED COMBINATORIAL EMBEDDED BUTTON SET (AUTOPLAY, SKIP, AUTONEXT, NEXT EPISODE) */
-                <div className="flex items-center bg-neutral-900/90 border border-neutral-800/80 p-1.5 rounded-xl space-x-1.5 shadow-xl backdrop-blur-md">
+              {/* CENTER: Action buttons — only visible in fullscreen, absolutely centered */}
+              {isFullscreen && (
+                <div className="absolute left-1/2 -translate-x-1/2 flex items-center bg-neutral-900/90 border border-neutral-800/80 p-1.5 rounded-xl space-x-1.5 shadow-xl backdrop-blur-md">
                   <label className="mobile-expand-hitbox flex items-center space-x-2 px-3 py-1.5 rounded-lg hover:bg-neutral-800/40 cursor-pointer select-none group text-xs font-mono text-neutral-300">
                     <input
                       type="checkbox" checked={autoplay} onChange={toggleAutoplayState}
@@ -1284,22 +1284,22 @@ function WatchContent() {
                     Next Ep &rarr;
                   </button>
                 </div>
-              ) : (
-                /* INJECTED RELOCATED FULLSCREEN TRIGGER (REPLACES THE OLD CINEMA ENGINE TEXT STRIP) */
-                <button
-                  onClick={toggleFullscreen}
-                  className="mobile-expand-hitbox px-3 py-1.5 bg-neutral-900 hover:bg-neutral-800 border border-neutral-800 rounded-lg text-[10px] font-mono font-bold tracking-wider text-neutral-300 hover:text-white uppercase transition active:scale-95 shadow flex items-center gap-2"
-                  title="Enter Fullscreen"
-                >
-                  <img 
-                    src="/Assets/full-screen.png" 
-                    alt="Cinema Size"
-                    style={{ width: "11px", height: "11px" }}
-                    className="object-contain invert brightness-200 contrast-200"
-                  />
-                  Cinema View
-                </button>
               )}
+
+              {/* RIGHT: Fullscreen toggle — always present (enter when normal, exit when fullscreen) */}
+              <button
+                onClick={toggleFullscreen}
+                className="mobile-expand-hitbox ml-auto p-2 bg-neutral-900 hover:bg-neutral-800 border border-neutral-800 rounded-lg transition active:scale-95 shadow flex items-center justify-center shrink-0"
+                title={isFullscreen ? "Exit Fullscreen" : "Enter Fullscreen"}
+              >
+                <img 
+                  src="/Assets/full-screen.png" 
+                  alt={isFullscreen ? "Exit Fullscreen" : "Enter Fullscreen"}
+                  style={{ width: "14px", height: "14px" }}
+                  className="object-contain invert brightness-200 contrast-200"
+                />
+              </button>
+
             </div>
           </div>
         </div>
@@ -1375,7 +1375,7 @@ function WatchContent() {
                 <select
                   value={activeCategory}
                   onChange={(e) => handleCategoryChange(e.target.value as "sub" | "dub")}
-                  className="w-full bg-neutral-955 border border-neutral-800 text-neutral-200 px-3 py-2 rounded text-xs font-mono font-bold focus:outline-none focus:border-orange-500 cursor-pointer"
+                  className="w-full bg-neutral-950 border border-neutral-800 text-neutral-200 px-3 py-2 rounded text-xs font-mono font-bold focus:outline-none focus:border-orange-500 cursor-pointer"
                 >
                   <option value="sub">Subtitled</option>
                   <option value="dub" disabled={!hasDubAvailable}>
