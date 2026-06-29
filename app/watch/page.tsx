@@ -214,6 +214,7 @@ function WatchContent() {
     const p = new URLSearchParams(searchParams.toString());
     p.set("epNum", String(nextEp.number));
     p.set("slug", slug);
+    savedTimeRef.current = 0;
     router.push(`${pathname}?${p.toString()}`);
   }, [episodes, epNum, searchParams, pathname, router]);
 
@@ -230,6 +231,7 @@ function WatchContent() {
     const p = new URLSearchParams(searchParams.toString());
     p.set("epNum", String(prevEp.number));
     p.set("slug", slug);
+    savedTimeRef.current = 0;
     router.push(`${pathname}?${p.toString()}`);
   }, [episodes, epNum, searchParams, pathname, router]);
 
@@ -1124,10 +1126,10 @@ function WatchContent() {
               showControls ? "opacity-100 scale-100" : "opacity-0 scale-95"
             }`}
           >
-            {/* Rewind 10s Trigger */}
+            {/* Rewind 10s Trigger — background removed */}
             <button
               onClick={() => skipSeconds(-10)}
-              className="pointer-events-auto mobile-expand-hitbox w-14 h-14 sm:w-16 sm:h-16 flex items-center justify-center rounded-full bg-black/50 hover:bg-black/70 border border-neutral-800/60 transition duration-200 group/btn transform hover:scale-110 active:scale-90 shadow-lg backdrop-blur-sm"
+              className="pointer-events-auto mobile-expand-hitbox w-14 h-14 sm:w-16 sm:h-16 flex items-center justify-center rounded-full bg-transparent hover:bg-black/20 border border-transparent hover:border-neutral-800/30 transition duration-200 group/btn transform hover:scale-110 active:scale-90 shadow-none backdrop-blur-none"
               title="Rewind 10 Seconds"
             >
               <img
@@ -1156,10 +1158,10 @@ function WatchContent() {
               />
             </button>
 
-            {/* Fast Forward 10s Trigger */}
+            {/* Fast Forward 10s Trigger — background removed */}
             <button
               onClick={() => skipSeconds(10)}
-              className="pointer-events-auto mobile-expand-hitbox w-14 h-14 sm:w-16 sm:h-16 flex items-center justify-center rounded-full bg-black/50 hover:bg-black/70 border border-neutral-800/60 transition duration-200 group/btn transform hover:scale-110 active:scale-90 shadow-lg backdrop-blur-sm"
+              className="pointer-events-auto mobile-expand-hitbox w-14 h-14 sm:w-16 sm:h-16 flex items-center justify-center rounded-full bg-transparent hover:bg-black/20 border border-transparent hover:border-neutral-800/30 transition duration-200 group/btn transform hover:scale-110 active:scale-90 shadow-none backdrop-blur-none"
               title="Fast Forward 10 Seconds"
             >
               <img
@@ -1303,16 +1305,16 @@ function WatchContent() {
                 </div>
               )}
 
-              {/* RIGHT: Fullscreen toggle — always present (enter when normal, exit when fullscreen) */}
+              {/* RIGHT: Fullscreen toggle — background removed, bigger icon */}
               <button
                 onClick={toggleFullscreen}
-                className="mobile-expand-hitbox ml-auto p-2 bg-neutral-900 hover:bg-neutral-800 border border-neutral-800 rounded-lg transition active:scale-95 shadow flex items-center justify-center shrink-0"
+                className="mobile-expand-hitbox ml-auto p-2 bg-transparent hover:bg-neutral-800/20 border border-transparent hover:border-neutral-800/30 rounded-lg transition active:scale-95 flex items-center justify-center shrink-0"
                 title={isFullscreen ? "Exit Fullscreen" : "Enter Fullscreen"}
               >
                 <img 
                   src="/Assets/full-screen.png" 
                   alt={isFullscreen ? "Exit Fullscreen" : "Enter Fullscreen"}
-                  style={{ width: "14px", height: "14px" }}
+                  style={{ width: "20px", height: "20px" }}
                   className="object-contain invert brightness-200 contrast-200"
                 />
               </button>
