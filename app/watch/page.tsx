@@ -266,28 +266,9 @@ function WatchContent() {
     setIsMuted(next);
   };
 
+  // Safe custom sandbox wrapper that bypasses native overlay on mobile
   const toggleFullscreen = () => {
-    const container = playerContainerRef.current;
-    if (!container) return;
-
-    const requestFS = container.requestFullscreen || (container as any).webkitRequestFullscreen;
-    const exitFS = document.exitFullscreen || (document as any).webkitExitFullscreen;
-    const activeFSElement = document.fullscreenElement || (document as any).webkitFullscreenElement;
-
-    if (requestFS) {
-      if (!activeFSElement) {
-        requestFS.call(container)
-          .then(() => setIsFullscreen(true))
-          .catch(() => {
-            setIsFullscreen(!isFullscreen);
-          });
-      } else {
-        exitFS.call(document);
-        setIsFullscreen(false);
-      }
-    } else {
-      setIsFullscreen(!isFullscreen);
-    }
+    setIsFullscreen((prev) => !prev);
     triggerControlsActivity();
   };
 
@@ -1078,7 +1059,8 @@ function WatchContent() {
               {epNum}. {episodeTitle || `Episode ${epNum}`}
             </div>
 
-            <div className="flex items-center space-x-6 self-end sm:self-auto">
+            {/* Shifted rightwards via justify-end and tracking utilities */}
+            <div className="flex items-center space-x-6 self-end sm:self-auto justify-end ml-auto">
               {/* Desktop & Mobile Responsive Top Volume Hud Block */}
               <div className="flex items-center space-x-2 bg-black/40 backdrop-blur-md px-3 py-1.5 rounded-lg border border-neutral-800/40">
                 <button onClick={toggleMute} className="mobile-expand-hitbox text-[10px] font-mono font-bold text-neutral-400 hover:text-neutral-200 transition tracking-wider">
@@ -1129,7 +1111,7 @@ function WatchContent() {
             </div>
           </div>
 
-          {/* CENTERED KINETIC CONTROLS PLATFORM - CRUNCHYROLL & NETFLIX STYLED */}
+          {/* CENTERED KINETIC CONTROLS PLATFORM - NO ROUNDED CIRCLE BACKGROUND BACKGROUND, LARGER SIZE */}
           <div 
             className={`absolute inset-0 flex items-center justify-center z-30 transition-all duration-300 pointer-events-auto gap-8 sm:gap-14 ${
               showControls ? "opacity-100 scale-100" : "opacity-0 scale-95 pointer-events-none"
@@ -1147,19 +1129,19 @@ function WatchContent() {
               </span>
             </button>
 
-            {/* Core Center Play / Pause Cluster */}
+            {/* Core Center Play / Pause Cluster - Enlarged + Transparent Minimalist Background Wrapper */}
             <button
               onClick={togglePlay}
-              className="mobile-expand-hitbox w-20 h-20 sm:w-24 sm:h-24 flex items-center justify-center rounded-full bg-orange-500 hover:bg-orange-600 text-white transition-all duration-200 transform hover:scale-110 active:scale-95 shadow-[0_0_30px_rgba(249,115,22,0.4)] border border-orange-400/30"
+              className="mobile-expand-hitbox w-24 h-24 sm:w-28 sm:h-28 flex items-center justify-center bg-transparent text-white transition-all duration-200 transform hover:scale-110 active:scale-95 filter drop-shadow-[0_4px_12px_rgba(0,0,0,0.5)]"
               title={isPlaying ? "Pause" : "Play"}
             >
               <img
                 src={isPlaying ? "/Assets/pause.png" : "/Assets/play.png"}
                 alt="Playback Status"
                 style={{ 
-                  width: isPlaying ? "26px" : "28px", 
-                  height: isPlaying ? "26px" : "28px",
-                  marginLeft: isPlaying ? "0px" : "4px" 
+                  width: isPlaying ? "44px" : "48px", 
+                  height: isPlaying ? "44px" : "48px",
+                  marginLeft: isPlaying ? "0px" : "6px" 
                 }}
                 className="object-contain invert brightness-200 contrast-200"
               />
@@ -1260,7 +1242,7 @@ function WatchContent() {
                 <span>{formatTime(duration)}</span>
               </div>
 
-              {/* Right Segment: Conditionally Loaded Dynamic Grid Configurations */}
+              {/* Right Segment: Fullscreen Button or Expanded Controls Menu */}
               {isFullscreen ? (
                 /* INJECTED INTEGRATED COMBINATORIAL EMBEDDED BUTTON SET (AUTOPLAY, SKIP, AUTONEXT, NEXT EPISODE) */
                 <div className="flex items-center bg-neutral-900/90 border border-neutral-800/80 p-1.5 rounded-xl space-x-1.5 shadow-xl backdrop-blur-md">
@@ -1299,16 +1281,26 @@ function WatchContent() {
                   </button>
                 </div>
               ) : (
-                /* Native Fallback Space Buffer for Standard Mini-Layout Optimization */
-                <div className="text-[10px] font-mono tracking-widest text-neutral-500 uppercase bg-black/20 px-2 py-1 rounded">
-                  Cinema Engine
-                </div>
+                /* INJECTED RELOCATED FULLSCREEN TRIGGER (REPLACES THE OLD CINEMA ENGINE TEXT STRIP) */
+                <button
+                  onClick={toggleFullscreen}
+                  className="mobile-expand-hitbox px-3 py-1.5 bg-neutral-900 hover:bg-neutral-800 border border-neutral-800 rounded-lg text-[10px] font-mono font-bold tracking-wider text-neutral-300 hover:text-white uppercase transition active:scale-95 shadow flex items-center gap-2"
+                  title="Enter Fullscreen"
+                >
+                  <img 
+                    src="/Assets/full-screen.png" 
+                    alt="Cinema Size"
+                    style={{ width: "11px", height: "11px" }}
+                    className="object-contain invert brightness-200 contrast-200"
+                  />
+                  Cinema View
+                </button>
               )}
             </div>
           </div>
         </div>
 
-        {/* DEFAULT COMPACT STANDARD FOOTER OPTIONS DECK (Only rendered when not standard Fullscreen mode) */}
+        {/* DEFAULT COMPACT STANDARD FOOTER OPTIONS DECK */}
         <div className="w-full bg-neutral-900/40 py-1.5 px-4 rounded-xl border border-neutral-900 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 shadow-md backdrop-blur-sm">
           <div className="flex flex-wrap items-center gap-6 text-xs font-mono text-neutral-300">
             <label className="mobile-expand-hitbox flex items-center space-x-2.5 cursor-pointer select-none group relative py-1">
