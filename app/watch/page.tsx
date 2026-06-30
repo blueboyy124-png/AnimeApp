@@ -52,6 +52,7 @@ function WatchContent() {
   const savedTimeRef     = useRef<number>(0);
   const episodesCacheRef = useRef<{ id: string; data: any } | null>(null);
   const lastSkipTypeRef  = useRef<"op" | "ed" | null>(null);
+  const isNavigatingRef  = useRef(false);
 
   const [loading,         setLoading]         = useState(true);
   const [error,           setError]           = useState<string | null>(null);
@@ -202,6 +203,7 @@ function WatchContent() {
   }, [triggerControlsActivity]);
 
   const navigateToNextEpisode = useCallback(() => {
+    if (isNavigatingRef.current) return;
     const currentEpNum = parseFloat(epNum);
     const sorted = [...episodes].sort((a, b) => a.number - b.number);
     const nextEp = sorted.find((e) => Number(e.number) > currentEpNum);
@@ -215,10 +217,12 @@ function WatchContent() {
     p.set("epNum", String(nextEp.number));
     p.set("slug", slug);
     savedTimeRef.current = 0;
+    isNavigatingRef.current = true;
     router.push(`${pathname}?${p.toString()}`);
   }, [episodes, epNum, searchParams, pathname, router]);
 
   const navigateToPrevEpisode = useCallback(() => {
+    if (isNavigatingRef.current) return;
     const currentEpNum = parseFloat(epNum);
     const sorted = [...episodes].sort((a, b) => b.number - a.number); 
     const prevEp = sorted.find((e) => Number(e.number) < currentEpNum);
@@ -232,6 +236,7 @@ function WatchContent() {
     p.set("epNum", String(prevEp.number));
     p.set("slug", slug);
     savedTimeRef.current = 0;
+    isNavigatingRef.current = true;
     router.push(`${pathname}?${p.toString()}`);
   }, [episodes, epNum, searchParams, pathname, router]);
 
@@ -613,6 +618,7 @@ function WatchContent() {
         setCurrentActiveSkip(null);
         setShowSkipButton(false);
         lastSkipTypeRef.current = null;
+        isNavigatingRef.current = false;
 
         let epData: any;
         if (episodesCacheRef.current?.id === anilistId) {
@@ -792,7 +798,7 @@ function WatchContent() {
           hls.on(Hls.Events.MANIFEST_PARSED, () => {
             if (cancelled) return;
             setLoading(false);
-            if (initialTime > 0 && videoRef.current) {
+            if (videoRef.current) {
               videoRef.current.currentTime = initialTime;
             }
             if (autoplay && videoRef.current) {
@@ -856,7 +862,7 @@ function WatchContent() {
           videoRef.current.addEventListener("loadedmetadata", () => {
             if (cancelled) return;
             setLoading(false);
-            if (initialTime > 0 && videoRef.current) videoRef.current.currentTime = initialTime;
+            if (videoRef.current) videoRef.current.currentTime = initialTime;
             if (autoplay) videoRef.current?.play().catch(() => {});
           }, { once: true });
         } else {
