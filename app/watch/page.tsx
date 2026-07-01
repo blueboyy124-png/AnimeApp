@@ -632,6 +632,33 @@ function WatchContent() {
     }
   }, [anilistId, epNum]);
 
+// ⚡ FIX: BACKGROUND APP FOCUS RESUME (Recovers player state from home screen freeze)
+  useEffect(() => {
+    const handleVisibilityRecovery = () => {
+      if (document.visibilityState === "visible" && videoRef.current && hlsRef.current) {
+        const frozenPosition = videoRef.current.currentTime;
+        console.log("📱 Recovering video timeline from background sleep at:", frozenPosition);
+        
+        const activeSourceUrl = hlsRef.current.url;
+        if (activeSourceUrl) {
+          hlsRef.current.detachMedia();
+          hlsRef.current.loadSource(activeSourceUrl);
+          hlsRef.current.attachMedia(videoRef.current);
+          
+          hlsRef.current.once("hlsMediaAttached" as any, () => {
+            if (videoRef.current) {
+              videoRef.current.currentTime = frozenPosition;
+              videoRef.current.play().catch(() => {});
+            }
+          });
+        }
+      }
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityRecovery);
+    return () => document.removeEventListener("visibilitychange", handleVisibilityRecovery);
+  }, []);
+
   useEffect(() => {
     const id = parseInt(anilistId, 10);
     const epFloat = parseFloat(epNum);
@@ -649,14 +676,39 @@ function WatchContent() {
         lastSkipTypeRef.current = null;
         isNavigatingRef.current = false;
 
-        let epData: any;
+        let epData: any = null;
+        const storageCacheKey = `miruro_episodes_vault_${id}`;
+
         if (episodesCacheRef.current?.id === anilistId) {
           epData = episodesCacheRef.current.data;
         } else {
-          const res = await fetch(`${BACKEND_API}/episodes/${id}`);
-          if (res.ok) {
-            epData = await res.json();
-            episodesCacheRef.current = { id: anilistId, data: epData };
+          // Check physical local device storage cache first!
+          const offlineDataStr = typeof window !== "undefined" ? localStorage.getItem(storageCacheKey) : null;
+          if (offlineDataStr) {
+            try {
+              const parsedCache = JSON.parse(offlineDataStr);
+              // Keeps the data offline without an API network ping if it's less than 4 hours old
+              if (parsedCache.timestamp && Date.now() - parsedCache.timestamp < 4 * 60 * 60 * 1000) {
+                epData = parsedCache.data;
+                episodesCacheRef.current = { id: anilistId, data: epData };
+              }
+            } catch {
+              epData = null;
+            }
+          }
+
+          // If no cache exists, make a normal network request
+          if (!epData) {
+            const res = await fetch(`${BACKEND_API}/episodes/${id}`);
+            if (res.ok) {
+              epData = await res.json();
+              episodesCacheRef.current = { id: anilistId, data: epData };
+              
+              // Write a background copy for instant future loads
+              if (typeof window !== "undefined") {
+                localStorage.setItem(storageCacheKey, JSON.stringify({ data: epData, timestamp: Date.now() }));
+              }
+            }
           }
         }
 
