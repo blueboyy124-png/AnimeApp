@@ -53,6 +53,7 @@ function WatchContent() {
   const episodesCacheRef = useRef<{ id: string; data: any } | null>(null);
   const lastSkipTypeRef  = useRef<"op" | "ed" | null>(null);
   const isNavigatingRef  = useRef(false);
+  const forceStartFromZeroRef = useRef(false);
 
   const [loading,         setLoading]         = useState(true);
   const [error,           setError]           = useState<string | null>(null);
@@ -167,6 +168,25 @@ function WatchContent() {
     }
   }, [category, urlProvider, searchParams, pathname, router, loadActiveProfileData]);
 
+  // Update browser tab title and media session for lock screen display
+  useEffect(() => {
+    const title = `Episode ${epNum} — ${episodeTitle || "Anime"}`;
+    document.title = title;
+
+    if ("mediaSession" in navigator && videoRef.current) {
+      try {
+        navigator.mediaSession.metadata = new MediaMetadata({
+          title: `Episode ${epNum}`,
+          artist: episodeTitle || "Anime",
+          album: animeTitle,
+          artwork: episodeSnapshot ? [{ src: episodeSnapshot }] : [],
+        });
+      } catch {
+        // MediaSession not supported
+      }
+    }
+  }, [epNum, episodeTitle, animeTitle, episodeSnapshot]);
+
   const activeCategory = category ?? "sub";
   const provider = urlProvider ?? "kiwi";
 
@@ -217,6 +237,7 @@ function WatchContent() {
     p.set("epNum", String(nextEp.number));
     p.set("slug", slug);
     savedTimeRef.current = 0;
+    forceStartFromZeroRef.current = true;
     isNavigatingRef.current = true;
     router.push(`${pathname}?${p.toString()}`);
   }, [episodes, epNum, searchParams, pathname, router]);
@@ -236,6 +257,7 @@ function WatchContent() {
     p.set("epNum", String(prevEp.number));
     p.set("slug", slug);
     savedTimeRef.current = 0;
+    forceStartFromZeroRef.current = true;
     isNavigatingRef.current = true;
     router.push(`${pathname}?${p.toString()}`);
   }, [episodes, epNum, searchParams, pathname, router]);
@@ -244,6 +266,13 @@ function WatchContent() {
     if (!videoRef.current) return;
     isPlaying ? videoRef.current.pause() : videoRef.current.play().catch(() => {});
     triggerControlsActivity();
+  };
+
+  const handleVideoClick = () => {
+    if (showControls) {
+      setShowControls(false);
+      if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
+    }
   };
 
   const skipSeconds = (amount: number) => {
@@ -741,7 +770,10 @@ function WatchContent() {
         }
 
         let initialTime = 0;
-        if (savedTimeRef.current > 0) {
+        if (forceStartFromZeroRef.current) {
+          forceStartFromZeroRef.current = false;
+          savedTimeRef.current = 0;
+        } else if (savedTimeRef.current > 0) {
           initialTime = savedTimeRef.current;
           savedTimeRef.current = 0;
         } else {
@@ -1055,7 +1087,7 @@ function WatchContent() {
 
           <video
             ref={videoRef}
-            onClick={togglePlay}
+            onClick={handleVideoClick}
             onDoubleClick={toggleFullscreen}
             onTimeUpdate={handleTimeUpdate}
             onDurationChange={() => {
