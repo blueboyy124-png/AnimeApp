@@ -3,9 +3,10 @@
 import { useState, useEffect, use } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { getApiBaseUrl } from "../../utils/api";
 
 interface AnimeInfo {
-  id: number;
+  id: string | number;
   title: {
     english?: string;
     romaji?: string;
@@ -39,6 +40,7 @@ export default function AnimeDetailPage({ params }: PageProps) {
   const [info, setInfo] = useState<AnimeInfo | null>(null);
   const [episodes, setEpisodes] = useState<EpisodeData[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   // Layout presentation toggler state
   const [viewStyle, setViewStyle] = useState<ViewStyle>("compact");
@@ -46,39 +48,115 @@ export default function AnimeDetailPage({ params }: PageProps) {
   // Pagination Ranges Engine Tracking
   const [activeRangeIndex, setActiveRangeIndex] = useState<number>(0);
 
-  const API_BASE = "https://anime-api-one-cyan.vercel.app/api";
+  const BACKEND_API = getApiBaseUrl();
+  const fallbackGlobalImage = "https://images.unsplash.com/photo-1574375927938-d5a98e8edd86?q=80&w=600&auto=format&fit=crop";
 
   useEffect(() => {
     async function fetchData() {
       try {
-        const infoRes = await fetch(`${API_BASE}/info/${id}`);
-        const infoData = await infoRes.json();
-        if (infoData && infoData.results) {
-          setInfo(infoData.results);
-        } else {
-          setInfo(infoData);
-        }
+        // 1. Force the dynamic parameter to a clean string format
+        const safeId = String(id || "").trim();
+        
+        // 2. Route incoming request hashes explicitly to the correct media data provider
+        const isOmdbMedia = safeId.startsWith("tt") || safeId.startsWith("tmdb-");
 
-        const epRes = await fetch(`${API_BASE}/episodes/${id}`);
-        const epData = await epRes.json();
-        console.log("Raw Episode Payload:", epData);
+        if (isOmdbMedia) {
+          const cleanImdbId = safeId.replace("tmdb-movie-", "").replace("tmdb-tv-", "");
+          const apiKey = "68d53c36";
 
-        if (epData && epData.results && epData.results.providers) {
-          const providers = epData.results.providers;
-          const targetProvider = providers.gogoanime || providers.zoro || Object.values(providers)[0] as any;
-          
-          if (targetProvider && targetProvider.episodes && Array.isArray(targetProvider.episodes.sub)) {
-            const sortedEpisodes = [...targetProvider.episodes.sub].sort((a, b) => a.number - b.number);
-            setEpisodes(sortedEpisodes);
+          // Request core detail files
+          const infoRes = await fetch(`https://www.omdbapi.com/?apikey=${apiKey}&i=${cleanImdbId}`);
+          const infoData = await infoRes.json();
+
+          if (infoData && infoData.Response !== "False") {
+            setInfo({
+              id: cleanImdbId,
+              title: { english: infoData.Title, romaji: infoData.Title },
+              description: infoData.Plot && infoData.Plot !== "N/A" ? infoData.Plot : "No plot description available.",
+              coverImage: {
+                extraLarge: infoData.Poster !== "N/A" ? infoData.Poster : fallbackGlobalImage,
+                large: infoData.Poster !== "N/A" ? infoData.Poster : fallbackGlobalImage
+              },
+              genres: infoData.Genre ? infoData.Genre.split(", ") : ["Entertainment"]
+            });
+
+            // Map episodic tracks conditionally based on media structure types
+            if (infoData.Type === "series" || infoData.totalSeasons) {
+              const epRes = await fetch(`https://www.omdbapi.com/?apikey=${apiKey}&i=${cleanImdbId}&Season=1`);
+              const epData = await epRes.json();
+
+              if (epData && epData.Episodes) {
+                const mapped = epData.Episodes.map((ep: any) => ({
+                  id: `watch/tv/${cleanImdbId}/${ep.imdbID}`,
+                  number: parseInt(ep.Episode, 10) || 1,
+                  title: ep.Title || `Episode ${ep.Episode}`,
+                  description: `Broadcast Date: ${ep.Released || "N/A"}. IMDb User Rating: ${ep.imdbRating || "N/A"}/10.`,
+                  image: infoData.Poster !== "N/A" ? infoData.Poster : fallbackGlobalImage
+                }));
+                setEpisodes(mapped);
+              } else {
+                setEpisodes([]);
+              }
+            } else {
+              setEpisodes([{
+                id: `watch/movie/${cleanImdbId}/1`,
+                number: 1,
+                title: infoData.Title || "Full Feature Film",
+                description: infoData.Plot !== "N/A" ? infoData.Plot : "Streaming media pipeline synchronized.",
+                image: infoData.Poster !== "N/A" ? infoData.Poster : fallbackGlobalImage
+              }]);
+            }
           } else {
-            setEpisodes([]);
+            setInfo(null);
           }
         } else {
-          setEpisodes([]);
+          // --- STANDARD ANILIST FETCH ROUTINE FOR REGULAR ANIMES ---
+          const infoRes = await fetch(`${BACKEND_API}/info/${safeId}`);
+
+          if (!infoRes.ok) {
+            throw new Error(
+              `Anime info request failed: ${infoRes.status} ${infoRes.statusText} (${BACKEND_API}/info/${safeId})`
+            );
+          }
+
+          const infoData = await infoRes.json();
+
+          if (infoData && infoData.results) {
+            setInfo(infoData.results);
+          } else {
+            setInfo(infoData);
+          }
+
+          const epRes = await fetch(`${BACKEND_API}/episodes/${safeId}`);
+
+          if (!epRes.ok) {
+            console.warn(`Episodes request failed: ${epRes.status} ${epRes.statusText}`);
+            setEpisodes([]);
+          } else {
+            const epData = await epRes.json();
+            console.log("Raw Episode Payload:", epData);
+
+            if (epData && epData.results && epData.results.providers) {
+              const providers = epData.results.providers;
+              const targetProvider = providers.gogoanime || providers.zoro || Object.values(providers)[0] as any;
+
+              if (targetProvider && targetProvider.episodes && Array.isArray(targetProvider.episodes.sub)) {
+                const sortedEpisodes = [...targetProvider.episodes.sub].sort((a, b) => a.number - b.number);
+                setEpisodes(sortedEpisodes);
+              } else {
+                setEpisodes([]);
+              }
+            } else if (epData && Array.isArray(epData.results)) {
+              setEpisodes(epData.results);
+            } else {
+              setEpisodes([]);
+            }
+          }
         }
 
       } catch (err) {
         console.error("Failed to load anime info structure mappings:", err);
+        setLoadError(err instanceof Error ? err.message : String(err));
       } finally {
         setLoading(false);
       }
@@ -103,7 +181,7 @@ export default function AnimeDetailPage({ params }: PageProps) {
         <div className="bg-neutral-900/30 border border-neutral-900 rounded-lg p-12 text-center max-w-sm space-y-1">
           <p className="text-neutral-400 font-semibold text-xs">Anime document not discovered</p>
           <p className="text-[11px] text-neutral-500 leading-normal">
-            Verify indices or re-route browse directories back home.
+            {loadError ?? "Verify indices or re-route browse directories back home."}
           </p>
         </div>
       </div>
@@ -215,7 +293,7 @@ export default function AnimeDetailPage({ params }: PageProps) {
 
           <div className="space-y-5 flex-1">
             <div className="text-[10px] font-bold tracking-widest text-neutral-200 uppercase bg-neutral-900 border border-neutral-800 px-2.5 py-0.5 rounded inline-block">
-              Premium Broadcast Feed
+              {String(id).startsWith("tt") || String(id).startsWith("tmdb-") ? "Global Media Feed" : "Premium Broadcast Feed"}
             </div>
             
             <h1 className="text-3xl md:text-5xl font-extrabold tracking-tight text-white leading-none">
@@ -316,7 +394,31 @@ export default function AnimeDetailPage({ params }: PageProps) {
                 }>
                   {currentDisplayedEpisodes.map((ep) => {
                     const cleanSlug = ep.id.includes('/') ? ep.id.split('/').pop() : ep.id;
-                    const providerName = ep.id.includes('watch/') ? ep.id.split('/')[1] : "gogoanime";
+                    const isTmdbMedia = String(id).startsWith("tmdb-");
+                    const isTmdbSeries = String(id).startsWith("tmdb-tv-");
+                    const streamId = isTmdbMedia
+                      ? String(id).replace(/^tmdb-(?:movie|tv)-/, "")
+                      : id;
+                    
+                    // Route provider lookup configurations dynamically
+                    let providerName = ep.id.includes('watch/') ? ep.id.split('/')[1] : "gogoanime";
+                    if (String(id).startsWith("tt") || isTmdbMedia) {
+                      providerName = "tmdb";
+                    }
+                    const streamType = isTmdbMedia ? (isTmdbSeries ? "series" : "movie") : undefined;
+                    const streamQuery = new URLSearchParams({
+                      provider: providerName,
+                      anilistId: String(streamId),
+                      category: "sub",
+                      slug: cleanSlug || "",
+                      epNum: String(ep.number),
+                    });
+                    if (streamType) {
+                      streamQuery.set("type", streamType);
+                      if (isTmdbSeries) streamQuery.set("season", "1");
+                    }
+                    const watchHref = `/watch?${streamQuery.toString()}`;
+                    
                     const fallbackDescription = "Broadcast stream payload data successfully mounted and synchronized.";
 
                     // OPTION 1: COMPACT GRID LOOK
@@ -324,7 +426,7 @@ export default function AnimeDetailPage({ params }: PageProps) {
                       return (
                         <Link
                           key={ep.id}
-                          href={`/watch?provider=${providerName}&anilistId=${id}&category=sub&slug=${encodeURIComponent(cleanSlug || "")}&epNum=${ep.number}`}
+                          href={watchHref}
                           className="bg-neutral-900/50 border border-neutral-900 hover:border-neutral-700 py-3.5 rounded text-center transition block group outline-none focus:border-orange-500"
                         >
                           <span className="text-neutral-300 group-hover:text-orange-500 font-bold text-xs transition duration-200 block">
@@ -339,7 +441,7 @@ export default function AnimeDetailPage({ params }: PageProps) {
                       return (
                         <Link
                           key={ep.id}
-                          href={`/watch?provider=${providerName}&anilistId=${id}&category=sub&slug=${encodeURIComponent(cleanSlug || "")}&epNum=${ep.number}`}
+                          href={watchHref}
                           className="bg-neutral-900/50 border border-neutral-900 hover:border-neutral-700 p-4 rounded transition block group outline-none focus:border-orange-500 space-y-1 text-left"
                         >
                           <div className="text-neutral-200 group-hover:text-orange-500 font-bold text-xs transition duration-200 truncate">
@@ -356,7 +458,7 @@ export default function AnimeDetailPage({ params }: PageProps) {
                     return (
                       <Link
                         key={ep.id}
-                        href={`/watch?provider=${providerName}&anilistId=${id}&category=sub&slug=${encodeURIComponent(cleanSlug || "")}&epNum=${ep.number}`}
+                        href={watchHref}
                         className="bg-neutral-900/40 border border-neutral-900 hover:border-neutral-800 rounded overflow-hidden transition flex h-28 md:h-32 group outline-none focus:border-orange-500 text-left"
                       >
                         <div className="w-1/3 h-full shrink-0 relative bg-neutral-900 border-r border-neutral-900 overflow-hidden select-none">

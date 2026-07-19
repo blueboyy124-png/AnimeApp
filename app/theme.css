@@ -1,0 +1,56 @@
+/*
+ * theme.css
+ *
+ * Broad-strokes light mode. The app was built entirely with hardcoded
+ * dark colors (bg-neutral-950, text-neutral-100, etc.) rather than
+ * Tailwind's dark:/light: variant system, so a pixel-perfect retrofit
+ * would mean touching every className in every component. This instead
+ * overrides the most common color classes site-wide via CSS when the
+ * `.light` class is present on <html> — covers the broad strokes (page
+ * backgrounds, text, borders, cards) consistently, but some
+ * component-specific quirks may still need manual polish over time as
+ * they're noticed.
+ *
+ * Import this once in app/layout.tsx: import "../theme.css";
+ */
+
+html.light {
+  color-scheme: light;
+}
+
+/* Backgrounds — darkest to lightest, mapped to a light equivalent scale */
+html.light .bg-neutral-950 { background-color: #ffffff !important; }
+html.light .bg-neutral-900 { background-color: #f4f4f5 !important; }
+html.light .bg-neutral-900\/30 { background-color: rgba(244,244,245,0.6) !important; }
+html.light .bg-neutral-900\/40 { background-color: rgba(244,244,245,0.7) !important; }
+html.light .bg-neutral-900\/50 { background-color: rgba(244,244,245,0.8) !important; }
+html.light .bg-neutral-800 { background-color: #e4e4e7 !important; }
+html.light .bg-neutral-800\/40 { background-color: rgba(228,228,231,0.6) !important; }
+html.light .bg-black { background-color: #ffffff !important; }
+html.light .bg-black\/40 { background-color: rgba(255,255,255,0.7) !important; }
+html.light .bg-black\/60 { background-color: rgba(255,255,255,0.8) !important; }
+html.light .bg-black\/70 { background-color: rgba(255,255,255,0.85) !important; }
+html.light .bg-black\/80 { background-color: rgba(255,255,255,0.9) !important; }
+html.light .bg-black\/85 { background-color: rgba(255,255,255,0.92) !important; }
+html.light .bg-black\/95 { background-color: rgba(255,255,255,0.96) !important; }
+
+/* Text */
+html.light .text-neutral-100,
+html.light .text-white { color: #18181b !important; }
+html.light .text-neutral-200 { color: #27272a !important; }
+html.light .text-neutral-300 { color: #3f3f46 !important; }
+html.light .text-neutral-400 { color: #52525b !important; }
+html.light .text-neutral-500 { color: #71717a !important; }
+html.light .text-neutral-600 { color: #a1a1aa !important; }
+
+/* Borders */
+html.light .border-neutral-900 { border-color: #e4e4e7 !important; }
+html.light .border-neutral-800 { border-color: #d4d4d8 !important; }
+html.light .border-neutral-700 { border-color: #a1a1aa !important; }
+
+/* Hover/group-hover text on cards etc still needs to darken, not lighten */
+html.light .group-hover\:text-neutral-200:hover,
+html.light .group-hover\:text-white:hover { color: #18181b !important; }
+
+/* Orange accent, tap highlight, and error/red states stay the same in
+   both themes — no overrides needed there. */
