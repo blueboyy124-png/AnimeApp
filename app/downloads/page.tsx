@@ -53,7 +53,28 @@ export default function DownloadsPage() {
     };
   }, [loadEverything]);
 
+  const labelForItem = (item: OfflineDownload) => {
+    if (item.mediaType === "movie") return item.animeTitle || "Movie";
+    if (item.mediaType === "tv") return `${item.animeTitle || "TV Show"} — S${item.season ?? 1} E${item.episodeNumber}`;
+    return `${item.animeTitle || "Anime"} — Ep ${item.episodeNumber}`;
+  };
+
   const handlePlay = (item: OfflineDownload) => {
+    // Electron: play straight from the saved file on disk using the native
+    // custom protocol handler registered by the main process.
+    const electronApi = (window as any).electronAPI;
+    if (electronApi?.playMediaFile && item.filePath) {
+      electronApi.playMediaFile(item.filePath).catch((err: any) => {
+        console.error("Failed to play local file:", err);
+        alert("Could not play this file. It may have been moved or deleted.");
+      });
+      return;
+    }
+    // Browser: play the in-memory blob (web-only downloads).
+    if (!item.blob) {
+      alert("This download has no local file to play.");
+      return;
+    }
     if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current);
     objectUrlRef.current = URL.createObjectURL(item.blob);
     setNowPlaying(item);
@@ -68,7 +89,17 @@ export default function DownloadsPage() {
   };
 
   const handleDelete = async (item: OfflineDownload) => {
-    if (!confirm(`Remove "${item.animeTitle}" Ep ${item.episodeNumber} from your downloads?`)) return;
+    const isMovie = item.mediaType === "movie";
+    if (!confirm(`Remove "${labelForItem(item)}" from your downloads?`)) return;
+    // Also delete the file on disk when running in Electron.
+    const electronApi = (window as any).electronAPI;
+    if (electronApi?.deleteMediaFile && item.filePath) {
+      try {
+        await electronApi.deleteMediaFile(item.filePath);
+      } catch (err) {
+        console.warn("Could not delete file on disk:", err);
+      }
+    }
     await deleteOfflineDownload(item.id);
     setDownloads((prev) => prev.filter((d) => d.id !== item.id));
     setTotalUsed((prev) => prev - item.sizeBytes);

@@ -1,0 +1,83 @@
+{
+  "appId": "com.porter.cineroll",
+  "productName": "CineRoll",
+  "directories": {
+    "buildResources": "resources",
+    "output": "dist"
+  },
+  "files": [
+    "assets/**/*",
+    "build/**/*",
+    "capacitor.config.*",
+    "app/**/*"
+  ],
+  "extraResources": [
+    {
+      "from": "../MiruroAPI",
+      "to": "MiruroAPI",
+      "filter": ["**/*", "!node_modules/.cache/**"]
+    },
+    {
+      "from": "../TMDB-Embed-API",
+      "to": "TMDB-Embed-API",
+      "filter": ["**/*", "!node_modules/.cache/**"]
+    },
+    {
+      "from": "../",
+      "to": "my-anime-site",
+      "filter": [
+        "package.json",
+        "next.config.ts",
+        "tsconfig.json",
+        "node_modules/next/**",
+        "node_modules/react/**",
+        "node_modules/react-dom/**",
+        "node_modules/@supabase/**",
+        "node_modules/hls.js/**",
+        "node_modules/theintrodb/**",
+        ".next/**",
+        "public/**",
+        "app/globals.css",
+        "app/theme.css",
+        "app/layout.tsx",
+        "app/page.tsx",
+        "app/ThemeContext.tsx",
+        "app/profilegate.tsx",
+        "app/ProfilePage.tsx",
+        "app/IconPicker.tsx",
+        "app/favicon.ico",
+        "app/AuthPage.tsx",
+        "app/utils/**",
+        "app/components/**",
+        "app/api/**",
+        "app/watch/**",
+        "app/downloads/**",
+        "app/settings/**",
+        "app/admin/**",
+        "app/anime/**",
+        "data/**"
+      ]
+    }
+  ],
+  "publish": null,
+  "nsis": {
+    "allowElevation": true,
+    "oneClick": false,
+    "allowToChangeInstallationDirectory": true
+  },
+  "win": {
+    "target": "nsis",
+    "icon": "assets/appIcon.ico"
+  },
+  "mac": {
+    "category": "public.app-category.entertainment",
+    "target": "dmg",
+    "icon": "assets/appIcon.icns",
+    "hardenedRuntime": true,
+    "gatekeeperAssess": false
+  },
+  "dmg": {
+    "sign": false
+  },
+  "asar": false
+}

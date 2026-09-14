@@ -18,14 +18,17 @@ const DB_VERSION = 1;
 const STORE_NAME = "downloads";
 
 export interface OfflineDownload {
-  id: string; // `${profileId}:${anilistId}:${episodeNumber}`
+  id: string; // `${profileId}:${mediaId}:${episodeNumber}`
   profileId: string;
-  anilistId: string;
+  mediaId: string;       // anilistId for anime, tmdbId for tv/movie
+  mediaType: "anime" | "tv" | "movie";
   animeTitle: string;
   episodeNumber: string;
   episodeImage: string;
   category: string;
-  blob: Blob;
+  season?: string;
+  blob?: Blob;           // browser in-memory blob (small files only)
+  filePath?: string;     // Electron: path to saved .mp4 on disk
   sizeBytes: number;
   downloadedAt: number;
 }
@@ -45,8 +48,8 @@ function openDb(): Promise<IDBDatabase> {
   });
 }
 
-export function makeDownloadId(profileId: string, anilistId: string | number, episodeNumber: string | number): string {
-  return `${profileId}:${anilistId}:${episodeNumber}`;
+export function makeDownloadId(profileId: string, mediaId: string | number, episodeNumber: string | number): string {
+  return `${profileId}:${mediaId}:${episodeNumber}`;
 }
 
 export async function saveOfflineDownload(item: OfflineDownload): Promise<void> {
@@ -99,7 +102,7 @@ export async function deleteOfflineDownload(id: string): Promise<void> {
   });
 }
 
-export async function isEpisodeDownloaded(profileId: string, anilistId: string | number, episodeNumber: string | number): Promise<boolean> {
-  const item = await getOfflineDownload(makeDownloadId(profileId, anilistId, episodeNumber));
+export async function isEpisodeDownloaded(profileId: string, mediaId: string | number, episodeNumber: string | number): Promise<boolean> {
+  const item = await getOfflineDownload(makeDownloadId(profileId, mediaId, episodeNumber));
   return !!item;
 }

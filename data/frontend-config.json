@@ -1,0 +1,11 @@
+{
+  "id": "ms2wachr",
+  "enabled": true,
+  "message": "This streaming app is still in development it may be glitchy or slow at times. If any bugs or errors occur please report it.",
+  "linkHref": null,
+  "linkLabel": null,
+  "theme": "warning",
+  "dismissible": true,
+  "startsAt": null,
+  "endsAt": null
+}

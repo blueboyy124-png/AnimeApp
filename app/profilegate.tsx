@@ -96,8 +96,18 @@ export default function ProfileGate({ children }: { children: ReactNode }) {
 
   if (booting) {
     return (
-      <div className="min-h-screen bg-neutral-950 flex items-center justify-center">
-        <div className="animate-spin rounded-full h-8 w-8 border-2 border-orange-500 border-t-transparent" />
+      <div className="relative min-h-screen bg-neutral-950 text-neutral-100 font-sans antialiased flex flex-col items-center justify-center space-y-4 overflow-hidden">
+        <div
+          className="fixed inset-0 pointer-events-none z-0"
+          style={{
+            background:
+              "radial-gradient(ellipse 80% 50% at 50% -10%, rgba(249,115,22,0.05), transparent 60%)",
+          }}
+        />
+        <div className="relative z-10 animate-spin rounded-full h-8 w-8 border-2 border-orange-500 border-t-transparent" />
+        <p className="relative z-10 text-[10px] font-mono tracking-[0.2em] text-neutral-600 uppercase">
+          Loading your account
+        </p>
       </div>
     );
   }

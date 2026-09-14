@@ -32,16 +32,19 @@ export default function IconPicker({ value, onChange }: IconPickerProps) {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center py-8">
+      <div className="flex flex-col items-center justify-center space-y-3 py-8">
         <div className="animate-spin rounded-full h-6 w-6 border-2 border-orange-500 border-t-transparent" />
+        <p className="text-[10px] font-mono tracking-[0.2em] text-neutral-600 uppercase">Loading icons</p>
       </div>
     );
   }
 
   if (icons.length === 0) {
     return (
-      <p className="text-xs font-mono text-neutral-500 text-center py-6">
-        No icons found in /Assets/icons yet. Add some image files there to enable picking.
+      <p className="text-center text-xs font-mono text-neutral-600 py-8 leading-relaxed">
+        No icons found in /Assets/icons yet.
+        <br />
+        Add some image files there to enable picking.
       </p>
     );
   }
@@ -53,10 +56,10 @@ export default function IconPicker({ value, onChange }: IconPickerProps) {
           key={icon}
           type="button"
           onClick={() => onChange(icon)}
-          className={`aspect-square rounded-lg overflow-hidden border-2 transition ${
+          className={`aspect-square rounded-lg overflow-hidden border-2 transition-all duration-200 cursor-pointer ${
             value === icon
-              ? "border-orange-500 ring-2 ring-orange-500/40"
-              : "border-neutral-800 hover:border-neutral-600"
+              ? "border-orange-500 shadow-[0_0_16px_2px_rgba(249,115,22,0.35)]"
+              : "border-neutral-800 hover:border-neutral-600 hover:scale-[1.03]"
           }`}
         >
           <img src={icon} alt="" className="w-full h-full object-cover bg-neutral-900" />

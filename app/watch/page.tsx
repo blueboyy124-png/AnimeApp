@@ -1,1656 +1,1063 @@
 "use client";
 
-import React, { useEffect, useState, useRef, useCallback } from "react";
-import { Suspense } from 'react';
-import { useSearchParams, useRouter, usePathname } from "next/navigation";
+import React, { useState, useRef, useCallback, useEffect, Suspense } from "react";
 import Link from "next/link";
-import { supabase, SupabaseProfile } from "../utils/supabase";
+import { useRouter, usePathname } from "next/navigation";
+import TopBar from "../components/TopBar";
+import { supabase } from "../utils/supabase";
 
-const BACKEND_API = process.env.NEXT_PUBLIC_API_URL ?? "https://anime-api-one-cyan.vercel.app/api";
+import WatchPlayer from "./components/WatchPlayer";
+import EpisodeInfo from "./components/EpisodeInfo";
+import Sidebar from "./components/Sidebar";
 
-const STABILITY_PRIORITY = ["bee", "kiwi", "pewe", "bonk"];
-const SKIP_COUNTDOWN_DURATION = 7000; // 7 seconds timeout for Netflix-style skip button
+import { useWatchRoute } from "./hooks/useWatchRoute";
+import { useWatchProgress } from "./hooks/useWatchProgress";
+import { usePlayback } from "./hooks/usePlayback";
+import { useTmdbEnrichment } from "./hooks/useTmdbEnrichment";
+import { useExternalMetadata } from "./hooks/useExternalMetadata";
+import { useEpisodeNavigation } from "./hooks/useEpisodeNavigation";
+import { useSkipIntervals } from "./hooks/useSkipIntervals";
+import { useWatchDownload } from "./hooks/useWatchDownload";
+import { useAnimeStream } from "./hooks/useAnimeStream";
+import { useExternalStream } from "./hooks/useExternalStream";
 
-interface EpisodeNode {
-  id: string;
-  number: number;
-  title?: string;
-  description?: string;
-  image?: string;
-  slug?: string;
-}
-
-type ViewStyle = "compact" | "detailed" | "cinematic";
-
-function extractEpisodeLists(epData: any, provider: string) {
-  const block =
-    epData?.results?.providers?.[provider] ??
-    epData?.providers?.[provider]          ??
-    epData?.results?.[provider]            ??
-    epData?.[provider];
-
-  if (!block) return { subList: [] as EpisodeNode[], dubList: [] as EpisodeNode[] };
-
-  const root = block?.episodes ?? block ?? {};
-  return {
-    subList: (root.sub ?? root.SUB ?? []) as EpisodeNode[],
-    dubList: (root.dub ?? root.DUB ?? []) as EpisodeNode[],
-  };
-}
+import {
+  loadSourceCache,
+  saveSourceCache,
+  loadPersistentSourceCache,
+  savePersistentSourceCache,
+} from "./lib/sourceCache";
+import { formatTime } from "./lib/utils";
+import { CONTINUE_WATCHING_THRESHOLD } from "./lib/constants";
+import type { EpisodeNode, TmdbSeasonInfo, TmdbEpisodeMeta } from "./lib/types";
 
 function WatchContent() {
-  const searchParams = useSearchParams();
-  const router       = useRouter();
-  const pathname     = usePathname();
+  const router = useRouter();
+  const pathname = usePathname();
 
+  // Route & Parameters
+  const {
+    provider,
+    mediaType,
+    anilistId,
+    activeCategory,
+    currentSlug,
+    epNum,
+    seasonNum,
+    queryString,
+    isExternalMedia,
+    isExternalMovie,
+    handleCategoryChange,
+    handleProviderChange,
+  } = useWatchRoute();
+
+  // Streaming & Pipeline Refs
+  const videoRef = useRef<HTMLVideoElement | null>(null);
   const playerContainerRef = useRef<HTMLDivElement | null>(null);
-  const videoRef           = useRef<HTMLVideoElement | null>(null);
-  const hlsRef             = useRef<any>(null);
-  const controlsTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const skipTimerRef       = useRef<NodeJS.Timeout | null>(null);
-
-  const savedTimeRef     = useRef<number>(0);
+  const hlsRef = useRef<any | null>(null);
+  const playbackGenerationRef = useRef<number>(0);
+  const playbackHasStartedRef = useRef<boolean>(false);
+  const playbackSourceReadyRef = useRef<boolean>(false);
+  const activeSourceUrlRef = useRef<string | null>(null);
+  const sourceAttemptRef = useRef<number>(0);
+  const sourceStateRef = useRef<"idle" | "pending" | "healthy" | "failed">("idle");
+  const stallRecoveryTimerRef = useRef<number | null>(null);
+  const streamTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const mediaProgressHandlerRef = useRef<(() => void) | null>(null);
+  const mediaSuccessHandlerRef = useRef<(() => void) | null>(null);
+  const mediaFailureHandlerRef = useRef<(() => void) | null>(null);
+  const savedTimeRef = useRef<number>(0);
+  const forceStartFromZeroRef = useRef<boolean>(false);
   const episodesCacheRef = useRef<{ id: string; data: any } | null>(null);
-  const lastSkipTypeRef  = useRef<"op" | "ed" | null>(null);
-  const isNavigatingRef  = useRef(false);
-  const forceStartFromZeroRef = useRef(false);
+  const seasonListRef = useRef<HTMLDivElement | null>(null);
+  const episodeListRef = useRef<HTMLDivElement | null>(null);
+  const activeRouteIdentityRef = useRef<string>("");
+  const previousMediaIdentityRef = useRef<string>("");
 
-  const [loading,         setLoading]         = useState(true);
-  const [error,           setError]           = useState<string | null>(null);
-  const [status,          setStatus]          = useState("Initializing Core...");
-  const [subSlug,         setSubSlug]         = useState<string | null>(null);
-  const [dubSlug,         setDubSlug]         = useState<string | null>(null);
-  const [hasDubAvailable, setHasDubAvailable] = useState(false);
-  const [availableProviders, setAvailableProviders] = useState<string[]>([]);
 
-  const [episodes,        setEpisodes]        = useState<EpisodeNode[]>([]);
-  const [viewStyle,       setViewStyle]       = useState<ViewStyle>("compact");
-  const [activeRangeIndex, setActiveRangeIndex] = useState<number>(0);
+  // Unified Media & Player State
+  const [loading, setLoading] = useState(true);
+  const [status, setStatus] = useState("Initializing player...");
+  const [error, setError] = useState<string | null>(null);
+  const [playbackHasStarted, setPlaybackHasStarted] = useState(false);
+  const [sidebarTab, setSidebarTab] = useState<"episodes" | "seasons" | "related">("episodes");
+  const [episodeInfoExpanded, setEpisodeInfoExpanded] = useState(true);
+  const [currentProfile, setCurrentProfile] = useState<any>(null);
 
-  const [isPlaying,       setIsPlaying]       = useState(false);
-  const [currentTime,     setCurrentTime]     = useState(0);
-  const [duration,        setDuration]        = useState(0);
-  const [volume,          setVolume]          = useState(1);
-  const [isMuted,         setIsMuted]         = useState(false);
-  const [isFullscreen,    setIsFullscreen]    = useState(false);
-  const [showControls,    setShowControls]    = useState(true);
-  const [captionsEnabled, setCaptionsEnabled] = useState(true);
-  const [currentCaption,  setCurrentCaption]  = useState<string>("");
-
-  const [animeTitle,      setAnimeTitle]      = useState<string>("Anime Series");
-  const [episodeTitle,    setEpisodeTitle]    = useState<string>("Currently Loading...");
-  const [episodeDesc,     setEpisodeDesc]     = useState<string>("");
+  const [animeTitle, setAnimeTitle] = useState<string>(
+    isExternalMovie ? "Movie" : isExternalMedia ? "TV Show" : "Anime Series"
+  );
+  const [episodeTitle, setEpisodeTitle] = useState<string>(
+    isExternalMovie ? "Full Feature Film" : `Episode ${epNum}`
+  );
+  const [episodeDesc, setEpisodeDesc] = useState<string>("");
   const [episodeSnapshot, setEpisodeSnapshot] = useState<string>("");
+  const [mediaAirDate, setMediaAirDate] = useState<string>("");
+  const [watchProviders, setWatchProviders] = useState<Array<{ name: string; type: string }>>([]);
+  const [episodes, setEpisodes] = useState<EpisodeNode[]>([]);
+  const [tmdbShowId, setTmdbShowId] = useState<string | null>(null);
+  const [tmdbSeasons, setTmdbSeasons] = useState<TmdbSeasonInfo[]>([]);
+  const [selectedTmdbSeason, setSelectedTmdbSeason] = useState<number>(Number(seasonNum) || 1);
+  const [tmdbSeasonLoading, setTmdbSeasonLoading] = useState<boolean>(false);
+  const [tmdbEpisodeMeta, setTmdbEpisodeMeta] = useState<Record<number, TmdbEpisodeMeta>>({});
+  const [subSlug, setSubSlug] = useState<string | null>(null);
+  const [dubSlug, setDubSlug] = useState<string | null>(null);
+  const [hasDubAvailable, setHasDubAvailable] = useState<boolean>(false);
+  const [availableProviders, setAvailableProviders] = useState<string[]>([]);
+  const [externalStreamUrl, setExternalStreamUrl] = useState<string | null>(null);
 
-  const [skipIntervals,   setSkipIntervals]   = useState<any[]>([]);
-  const [currentActiveSkip, setCurrentActiveSkip] = useState<any | null>(null);
-  const [showSkipButton,  setShowSkipButton]  = useState(false);
-
-  // Active User Profile Context State
-  const [currentProfile,  setCurrentProfile]  = useState<SupabaseProfile | null>(null);
-
-  // Automation Preferences States
-  const [autoplay,        setAutoplay]        = useState<boolean>(true);
-  const [autoskip,        setAutoskip]        = useState<boolean>(false);
-  const [autonext,        setAutonext]        = useState<boolean>(true);
-
-  const [isMounted, setIsMounted] = useState(false);
-
-  // Fullscreen crop-to-fill state (removes letterbox black bars by cropping sides)
-  const [isCropFill, setIsCropFill] = useState(false);
-
-  const urlProvider = searchParams.get("provider");
-  const anilistId   = searchParams.get("anilistId") ?? "0";
-  const category    = searchParams.get("category");
-  const rawSlug     = searchParams.get("slug")       ?? "";
-  const epNum       = searchParams.get("epNum")      ?? "1";
-
-  const currentSlug = rawSlug
-    ? (rawSlug.includes("watch/") ? rawSlug.split("/").pop() ?? rawSlug : rawSlug)
-    : "";
-
-  // Load Active Session Profile
-  const loadActiveProfileData = useCallback(async () => {
+  // Active Profile on Mount
+  useEffect(() => {
     try {
       const activeId = localStorage.getItem("streamanime_active_profile_id");
-      if (!activeId) return;
-
-      const { data, error } = await supabase
-        .from("profiles")
-        .select("*")
-        .eq("id", activeId)
-        .maybeSingle();
-
-      if (!error && data) {
-        setCurrentProfile(data);
+      const savedProfiles = localStorage.getItem("streamanime_profiles");
+      if (activeId && savedProfiles) {
+        const list = JSON.parse(savedProfiles);
+        const p = list.find((item: any) => item.id === activeId);
+        if (p) setCurrentProfile(p);
       }
-    } catch (err) {
-      console.error("Error pulling top header profile badge metadata:", err);
-    }
+    } catch {}
   }, []);
 
-  useEffect(() => {
-    setIsMounted(true);
-    loadActiveProfileData();
-
-    if (typeof window === "undefined") return;
-
-    const storedAutoplay = localStorage.getItem("streamanime_autoplay");
-    const storedAutoskip = localStorage.getItem("streamanime_autoskip");
-    const storedAutonext = localStorage.getItem("streamanime_autonext");
-    
-    if (storedAutoplay !== null) setAutoplay(storedAutoplay === "true");
-    if (storedAutoskip !== null) setAutoskip(storedAutoskip === "true");
-    if (storedAutonext !== null) setAutonext(storedAutonext === "true");
-
-    const savedLang = localStorage.getItem("streamanime_pref_lang") ?? "sub";
-    const savedProv = localStorage.getItem("streamanime_pref_provider");
-
-    let parametersChanged = false;
-    const nextParams = new URLSearchParams(searchParams.toString());
-
-    if (!category) {
-      nextParams.set("category", savedLang);
-      parametersChanged = true;
-    } else {
-      localStorage.setItem("streamanime_pref_lang", category);
+  const handleSignOutAction = useCallback(async () => {
+    try {
+      await supabase.auth.signOut();
+      localStorage.removeItem("streamanime_active_profile_id");
+      router.push("/login");
+    } catch {
+      router.push("/login");
     }
+  }, [router]);
 
-    if (!urlProvider && savedProv) {
-      nextParams.set("provider", savedProv);
-      parametersChanged = true;
-    } else if (urlProvider) {
-      localStorage.setItem("streamanime_pref_provider", urlProvider);
-    }
+  // Watch Progress & History
+  const { progressMap, commitPlaybackSessionToStorageLog } = useWatchProgress({
+    anilistId,
+    animeTitle,
+    epNum,
+    seasonNum,
+    episodeSnapshot,
+    provider,
+    activeCategory,
+    currentSlug,
+    isExternalMedia,
+    isExternalMovie,
+  });
 
-    if (parametersChanged) {
-      router.replace(`${pathname}?${nextParams.toString()}`);
-    }
-  }, [category, urlProvider, searchParams, pathname, router, loadActiveProfileData]);
+  // Episode Navigation
+  const {
+    navigateToNextEpisode,
+    navigateToPrevEpisode,
+    isNavigatingRef,
+    hasPrevEpisode,
+    hasNextEpisodeElement,
+  } = useEpisodeNavigation({
+    episodes,
+    epNum,
+    queryString,
+    isExternalMedia,
+    isExternalMovie,
+    tmdbShowId,
+    seasonNum,
+    tmdbSeasons,
+    savedTimeRef,
+    forceStartFromZeroRef,
+  });
 
-  // Update browser tab title and media session for lock screen display
-  useEffect(() => {
-    const title = `Episode ${epNum} — ${episodeTitle || "Anime"}`;
-    document.title = title;
-
-    if ("mediaSession" in navigator && videoRef.current) {
-      try {
-        navigator.mediaSession.metadata = new MediaMetadata({
-          title: `Episode ${epNum}`,
-          artist: episodeTitle || "Anime",
-          album: animeTitle,
-          artwork: episodeSnapshot ? [{ src: episodeSnapshot }] : [],
-        });
-      } catch {
-        // MediaSession not supported
+  // Playback Engine — must come before useSkipIntervals so autoskip/autonext are available
+  const checkSkipTimeRef = useRef<((time: number) => void) | null>(null);
+  const {
+    isPlaying,
+    setIsPlaying,
+    currentTime,
+    setCurrentTime,
+    duration,
+    setDuration,
+    bufferedPercent,
+    setBufferedPercent,
+    volume,
+    isMuted,
+    isFullscreen,
+    showControls,
+    captionsEnabled,
+    subtitleTracks,
+    setSubtitleTracks,
+    currentCaption,
+    setCurrentCaption,
+    playbackRate,
+    videoQuality,
+    setVideoQuality,
+    seekFlash,
+    setSeekFlash,
+    isPiPActive,
+    isCropFill,
+    showSettingsMenu,
+    setShowSettingsMenu,
+    showVolumeSlider,
+    autoplay,
+    autoskip,
+    autonext,
+    settingsMenuRef,
+    volumeControlRef,
+    triggerControlsActivity,
+    togglePlay,
+    handleVideoClick,
+    skipSeconds,
+    handleScrub,
+    applyCaptionMode,
+    setVolumeLevel,
+    toggleMute,
+    togglePictureInPicture,
+    applyPlaybackRate,
+    toggleFullscreen,
+    revealVolumeSlider,
+    scheduleHideVolumeSlider,
+    toggleAutoplayState,
+    toggleAutoskipState,
+    toggleAutonextState,
+    toggleCropFill,
+    handleTimeUpdate,
+  } = usePlayback({
+    videoRef,
+    setLoading,
+    setStatus,
+    setError,
+    onTimeUpdateCallback: (time, totalDuration) => {
+      if (totalDuration > 0 && isFinite(time)) {
+        commitPlaybackSessionToStorageLog(time, totalDuration);
       }
-    }
-  }, [epNum, episodeTitle, animeTitle, episodeSnapshot]);
+    },
+    onSkipCheck: (time) => {
+      checkSkipTimeRef.current?.(time);
+    },
+  });
 
-  const activeCategory = category ?? "sub";
-  const provider = urlProvider ?? "kiwi";
+  // Skip Intervals (Intro/Outro) — needs autoskip/autonext from usePlayback
+  const {
+    skipIntervals,
+    currentActiveSkip,
+    showSkipButton,
+    resetSkipState,
+    fetchSkipTimestamps,
+    checkSkipTime,
+    executeManualSkipSegment,
+  } = useSkipIntervals({
+    isExternalMedia,
+    isExternalMovie,
+    anilistId,
+    seasonNum,
+    epNum,
+    tmdbShowId,
+    animeTitle,
+    tmdbSeasons,
+    autoskip,
+    autonext,
+    videoRef,
+    navigateToNextEpisode,
+  });
+  // Wire checkSkipTime into the ref so the playback callback above can invoke it
+  checkSkipTimeRef.current = checkSkipTime;
 
+
+  // Offline Downloads
+  const { downloadProgress, downloadedFlag, handleDownload } = useWatchDownload({
+    anilistId,
+    epNum,
+    seasonNum,
+    currentSlug,
+    animeTitle,
+    episodeSnapshot,
+    activeCategory,
+    provider,
+    isExternalMedia,
+    isExternalMovie,
+    setError,
+  });
+
+  // TMDB Enrichment for Anime
+  useTmdbEnrichment({
+    isExternalMedia,
+    anilistId,
+    animeTitle,
+    episodesLength: episodes.length,
+    epNum,
+    tmdbShowId,
+    setTmdbShowId,
+    tmdbSeasons,
+    setTmdbSeasons,
+    selectedTmdbSeason,
+    setSelectedTmdbSeason,
+    setTmdbSeasonLoading,
+    setTmdbEpisodeMeta,
+  });
+
+  // External Movie/TV Metadata
+  useExternalMetadata({
+    isExternalMedia,
+    isExternalMovie,
+    anilistId,
+    seasonNum,
+    epNum,
+    setAnimeTitle,
+    setEpisodeTitle,
+    setEpisodeDesc,
+    setEpisodeSnapshot,
+    setMediaAirDate,
+    setWatchProviders,
+    setEpisodes,
+    tmdbShowId,
+    setTmdbShowId,
+    setTmdbSeasons,
+    selectedTmdbSeason,
+    setSelectedTmdbSeason,
+    setTmdbSeasonLoading,
+  });
+
+  // Destroy HLS lifecycle helper
   const destroyHls = useCallback(() => {
+    if (streamTimeoutRef.current) {
+      clearTimeout(streamTimeoutRef.current);
+      streamTimeoutRef.current = null;
+    }
     if (hlsRef.current) {
-      try { hlsRef.current.detachMedia(); hlsRef.current.destroy(); } catch {}
+      try {
+        hlsRef.current.detachMedia();
+        hlsRef.current.destroy();
+      } catch {}
       hlsRef.current = null;
     }
+    mediaFailureHandlerRef.current = null;
+    mediaSuccessHandlerRef.current = null;
+    mediaProgressHandlerRef.current = null;
+    sourceAttemptRef.current += 1;
+    sourceStateRef.current = "idle";
+    activeSourceUrlRef.current = null;
+    playbackSourceReadyRef.current = false;
+    if (stallRecoveryTimerRef.current) {
+      window.clearTimeout(stallRecoveryTimerRef.current);
+      stallRecoveryTimerRef.current = null;
+    }
     if (videoRef.current) {
-      try { videoRef.current.src = ""; videoRef.current.load(); } catch {}
-    }
-  }, []);
-
-  useEffect(() => {
-    return () => {
-      if (hlsRef.current) {
-        try { hlsRef.current.detachMedia(); hlsRef.current.destroy(); } catch {}
-      }
-      if (skipTimerRef.current) clearTimeout(skipTimerRef.current);
-    };
-  }, []);
-
-  const triggerControlsActivity = useCallback(() => {
-    setShowControls(true);
-    if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
-    if (isPlaying) {
-      controlsTimeoutRef.current = setTimeout(() => setShowControls(false), 3500);
-    }
-  }, [isPlaying]);
-
-  useEffect(() => {
-    triggerControlsActivity();
-    return () => { if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current); };
-  }, [triggerControlsActivity]);
-
-  const navigateToNextEpisode = useCallback(() => {
-    if (isNavigatingRef.current) return;
-    const currentEpNum = parseFloat(epNum);
-    const sorted = [...episodes].sort((a, b) => a.number - b.number);
-    const nextEp = sorted.find((e) => Number(e.number) > currentEpNum);
-    if (!nextEp) return;
-
-    const slug = nextEp.id.includes("/")
-      ? nextEp.id.split("/").pop() ?? nextEp.id
-      : nextEp.id;
-
-    const p = new URLSearchParams(searchParams.toString());
-    p.set("epNum", String(nextEp.number));
-    p.set("slug", slug);
-    savedTimeRef.current = 0;
-    forceStartFromZeroRef.current = true;
-    isNavigatingRef.current = true;
-    router.push(`${pathname}?${p.toString()}`);
-  }, [episodes, epNum, searchParams, pathname, router]);
-
-  const navigateToPrevEpisode = useCallback(() => {
-    if (isNavigatingRef.current) return;
-    const currentEpNum = parseFloat(epNum);
-    const sorted = [...episodes].sort((a, b) => b.number - a.number); 
-    const prevEp = sorted.find((e) => Number(e.number) < currentEpNum);
-    if (!prevEp) return;
-
-    const slug = prevEp.id.includes("/")
-      ? prevEp.id.split("/").pop() ?? prevEp.id
-      : prevEp.id;
-
-    const p = new URLSearchParams(searchParams.toString());
-    p.set("epNum", String(prevEp.number));
-    p.set("slug", slug);
-    savedTimeRef.current = 0;
-    forceStartFromZeroRef.current = true;
-    isNavigatingRef.current = true;
-    router.push(`${pathname}?${p.toString()}`);
-  }, [episodes, epNum, searchParams, pathname, router]);
-
-  const togglePlay = () => {
-    if (!videoRef.current) return;
-    isPlaying ? videoRef.current.pause() : videoRef.current.play().catch(() => {});
-    triggerControlsActivity();
-  };
-
-  const handleVideoClick = () => {
-    if (showControls) {
-      setShowControls(false);
-      if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
-    }
-  };
-
-  const skipSeconds = (amount: number) => {
-    if (!videoRef.current) return;
-    videoRef.current.currentTime = Math.max(0, Math.min(videoRef.current.duration || 0, videoRef.current.currentTime + amount));
-    triggerControlsActivity();
-  };
-
-  const handleScrub = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (!videoRef.current) return;
-    const t = parseFloat(e.target.value);
-    videoRef.current.currentTime = t;
-    setCurrentTime(t);
-    triggerControlsActivity();
-  };
-
-  const handleVolumeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (!videoRef.current) return;
-    const v = parseFloat(e.target.value);
-    videoRef.current.volume = v;
-    setVolume(v);
-    setIsMuted(v === 0);
-    videoRef.current.muted = v === 0;
-  };
-
-  const toggleMute = () => {
-    if (!videoRef.current) return;
-    const next = !isMuted;
-    videoRef.current.muted = next;
-    setIsMuted(next);
-  };
-
-  // Safe custom sandbox wrapper that bypasses native overlay on mobile
-  const toggleFullscreen = () => {
-    setIsFullscreen((prev) => !prev);
-    triggerControlsActivity();
-  };
-
-  useEffect(() => {
-    const syncFullscreenState = () => {
-      const isCurrentlyFull = !!(document.fullscreenElement || (document.fullscreenElement as any));
-      if (document.fullscreenEnabled || (document as any).webkitFullscreenEnabled) {
-        setIsFullscreen(isCurrentlyFull);
-      }
-    };
-    document.addEventListener("fullscreenchange", syncFullscreenState);
-    document.addEventListener("webkitfullscreenchange", syncFullscreenState);
-    return () => {
-      document.removeEventListener("fullscreenchange", syncFullscreenState);
-      document.removeEventListener("webkitfullscreenchange", syncFullscreenState);
-    };
-  }, []);
-
-  // Lock body scroll when in custom CSS fullscreen; restore + jump to top on exit
-  useEffect(() => {
-    if (isFullscreen) {
-      document.body.style.overflow = "hidden";
-    } else {
-      document.body.style.overflow = "";
-      window.scrollTo({ top: 0, behavior: "instant" as ScrollBehavior });
-    }
-    return () => {
-      document.body.style.overflow = "";
-    };
-  }, [isFullscreen]);
-
-  const handleCategoryChange = (target: "sub" | "dub") => {
-    if (target === activeCategory) return;
-    localStorage.setItem("streamanime_pref_lang", target);
-    const targetedSlug = target === "dub" ? dubSlug : subSlug;
-    if (!targetedSlug) return;
-    if (videoRef.current && isFinite(videoRef.current.currentTime)) {
-      savedTimeRef.current = videoRef.current.currentTime;
-    }
-    setIsPlaying(false);
-    destroyHls();
-    setLoading(true);
-    const p = new URLSearchParams(searchParams.toString());
-    p.set("category", target);
-    p.set("slug", targetedSlug);
-    router.push(`${pathname}?${p.toString()}`);
-  };
-
-  const handleProviderChange = (newProvider: string) => {
-    if (newProvider === provider) return;
-    localStorage.setItem("streamanime_pref_provider", newProvider);
-    if (videoRef.current && isFinite(videoRef.current.currentTime)) {
-      savedTimeRef.current = videoRef.current.currentTime;
-    }
-    setIsPlaying(false);
-    destroyHls();
-    setLoading(true);
-    const p = new URLSearchParams(searchParams.toString());
-    p.set("provider", newProvider);
-    p.set("slug", "");
-    router.push(`${pathname}?${p.toString()}`);
-  };
-
-  const toggleAutoplayState = () => {
-    const next = !autoplay;
-    setAutoplay(next);
-    localStorage.setItem("streamanime_autoplay", String(next));
-  };
-
-  const toggleAutoskipState = () => {
-    const next = !autoskip;
-    setAutoskip(next);
-    localStorage.setItem("streamanime_autoskip", String(next));
-  };
-
-  const toggleAutonextState = () => {
-    const next = !autonext;
-    setAutonext(next);
-    localStorage.setItem("streamanime_autonext", String(next));
-  };
-
-  const toggleCropFill = () => {
-    setIsCropFill((prev) => !prev);
-  };
-
-  const handleSignOutAction = () => {
-    localStorage.removeItem("streamanime_active_profile_id");
-    localStorage.removeItem("streamanime_watch_history");
-    window.location.reload();
-  };
-
-  const commitPlaybackSessionToStorageLog = useCallback(async (current: number, total: number) => {
-    if (!anilistId || anilistId === "0" || !total || total <= 0) return;
-    try {
-      const storageKey = "streamanime_watch_history";
-      const raw = localStorage.getItem(storageKey);
-      let list: any[] = raw ? JSON.parse(raw) : [];
-      
-      list = list.filter(
-        (item: any) =>
-          !(String(item.anilistId) === String(anilistId) &&
-            String(item.episodeNumber) === String(epNum))
-      );
-
-      const trackingPayload = {
-        anilistId: String(anilistId),
-        animeTitle,
-        episodeNumber: epNum,
-        episodeImage: episodeSnapshot || "https://placehold.co/300x180?text=Episode+Preview",
-        currentTime: current,
-        duration: total,
-        progressPercent: Math.min((current / total) * 100, 100),
-        provider,
-        category: activeCategory,
-        slug: currentSlug,
-        updatedAt: Date.now(),
-      };
-
-      list.unshift(trackingPayload);
-      const optimizedHistorySlice = list.slice(0, 20);
-      
-      localStorage.setItem(storageKey, JSON.stringify(optimizedHistorySlice));
-
-      const activeId = localStorage.getItem("streamanime_active_profile_id");
-      if (activeId) {
-        await supabase
-          .from("profiles")
-          .update({ recent_episodes: optimizedHistorySlice })
-          .eq("id", activeId);
-      }
-    } catch (e) {
-      console.error("Cloud watch sync workflow failed:", e);
-    }
-  }, [anilistId, animeTitle, epNum, episodeSnapshot, provider, activeCategory, currentSlug]);
-
-  const handleTimeUpdate = () => {
-    if (!videoRef.current) return;
-    const time = videoRef.current.currentTime;
-    setCurrentTime(time);
-
-    if (videoRef.current.textTracks && videoRef.current.textTracks.length > 0) {
-      let activeCueText = "";
-      const currentTracks = videoRef.current.textTracks;
-      for (let t = 0; t < currentTracks.length; t++) {
-        const track = currentTracks[t];
-        if (track.mode === "showing" && track.activeCues) {
-          for (let c = 0; c < track.activeCues.length; c++) {
-            const cue = track.activeCues ? track.activeCues[c] : (track.activeCues[c] as any);
-            if (cue && cue.text) {
-              activeCueText = cue.text;
-            }
-          }
-        }
-      }
-      setCurrentCaption(activeCueText);
-    }
-
-    if (Math.floor(time) % 4 === 0 && videoRef.current.duration) {
-      commitPlaybackSessionToStorageLog(time, videoRef.current.duration);
-    }
-
-    const activeBlock = skipIntervals.find(
-      (s) => time >= s.interval.startTime && time <= s.interval.endTime
-    );
-
-    if (activeBlock) {
-      if (autoskip) {
-        lastSkipTypeRef.current = null;
-        videoRef.current.currentTime = activeBlock.interval.endTime + 0.1;
-        setCurrentActiveSkip(null);
-        setShowSkipButton(false);
-        return;
-      }
-
-      if (currentActiveSkip?.skipId !== activeBlock.skipId) {
-        setCurrentActiveSkip(activeBlock);
-        lastSkipTypeRef.current = activeBlock.skipType;
-        setShowSkipButton(true);
-
-        if (skipTimerRef.current) clearTimeout(skipTimerRef.current);
-        skipTimerRef.current = setTimeout(() => {
-          setShowSkipButton(false);
-        }, SKIP_COUNTDOWN_DURATION);
-      }
-    } else if (lastSkipTypeRef.current === "ed") {
-      lastSkipTypeRef.current = null;
-      setCurrentActiveSkip(null);
-      setShowSkipButton(false);
-      if (autonext) {
-        navigateToNextEpisode();
-      }
-    } else {
-      if (currentActiveSkip) {
-        setCurrentActiveSkip(null);
-        setShowSkipButton(false);
-        if (skipTimerRef.current) clearTimeout(skipTimerRef.current);
-      }
-    }
-  };
-
-  const executeManualSkipSegment = () => {
-    if (!videoRef.current || !currentActiveSkip) return;
-
-    if (skipTimerRef.current) clearTimeout(skipTimerRef.current);
-    setShowSkipButton(false);
-
-    if (currentActiveSkip.skipType === "ed") {
-      lastSkipTypeRef.current = null;
-      setCurrentActiveSkip(null);
-      navigateToNextEpisode();
-    } else {
-      lastSkipTypeRef.current = null;
-      videoRef.current.currentTime = currentActiveSkip.interval.endTime + 0.1;
-      setCurrentActiveSkip(null);
-    }
-  };
-
-  const formatTime = (seconds: number) => {
-    if (isNaN(seconds)) return "00:00";
-    const m = Math.floor(seconds / 60);
-    const s = Math.floor(seconds % 60);
-    return `${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
-  };
-
-  const fetchTimestampsFromAniSkip = useCallback(async (targetDuration: number) => {
-    const id = parseInt(anilistId, 10);
-    const epFloat = parseFloat(epNum);
-    
-    const exactSeconds = Math.floor(targetDuration);
-    if (!id || isNaN(id) || isNaN(exactSeconds) || exactSeconds <= 60) {
-      return;
-    }
-
-    const applyConventionalFallbackIntervals = () => {
-      const isFirstEpisode = Math.floor(epFloat) === 1;
-      const fallbackSet: any[] = [];
-
-      if (!isFirstEpisode && exactSeconds > 300) {
-        fallbackSet.push({
-          skipType: "op",
-          interval: {
-            startTime: 90,
-            endTime: 180,
-          },
-          skipId: "fallback-op",
-          episodeLength: exactSeconds
-        });
-      }
-
-      if (exactSeconds > 240) {
-        fallbackSet.push({
-          skipType: "ed",
-          interval: {
-            startTime: exactSeconds - 120,
-            endTime: exactSeconds - 30,
-          },
-          skipId: "fallback-ed",
-          episodeLength: exactSeconds
-        });
-      }
-
-      setSkipIntervals(fallbackSet);
-    };
-
-    try {
-      const infoRes = await fetch(`${BACKEND_API}/info/${id}`);
-      if (!infoRes.ok) { applyConventionalFallbackIntervals(); return; }
-      const infoData = await infoRes.json();
-
-      let malId =
-        infoData?.results?.malId  ??
-        infoData?.results?.idMal  ??
-        infoData?.malId           ??
-        infoData?.idMal           ??
-        infoData?.results?.mal_id ??
-        infoData?.mal_id;
-
-      if (!malId) { applyConventionalFallbackIntervals(); return; }
-
-      const numericMalId = parseInt(String(malId), 10);
-      let targetedMalId = numericMalId;
-      let targetedEpisode = Math.floor(epFloat);
-
-      if (numericMalId === 21) {
-        if (targetedEpisode <= 206) {
-          targetedMalId = 21;
-        } else if (targetedEpisode <= 516) {
-          targetedMalId = 459;
-          targetedEpisode = targetedEpisode - 206;
-        } else if (targetedEpisode <= 891) {
-          targetedMalId = 918;
-          targetedEpisode = targetedEpisode - 516;
-        } else if (targetedEpisode <= 1084) {
-          targetedMalId = 38234;
-          targetedEpisode = targetedEpisode - 891;
-        } else {
-          targetedMalId = 56715;
-          targetedEpisode = targetedEpisode - 1084;
-        }
-      }
-
-      const skipUrl = `https://api.aniskip.com/v2/skip-times/${targetedMalId}/${targetedEpisode}?types=op&types=ed&episodeLength=${exactSeconds}`;
-      const skipRes = await fetch(skipUrl);
-      
-      if (skipRes.status === 404) {
-        applyConventionalFallbackIntervals();
-        return;
-      }
-
-      if (skipRes.ok) {
-        const skipData = await skipRes.json();
-        if (skipData.found && Array.isArray(skipData.results)) {
-          setSkipIntervals(skipData.results);
-        } else {
-          applyConventionalFallbackIntervals();
-        }
-      } else {
-        applyConventionalFallbackIntervals();
-      }
-    } catch (skipErr) {
-      applyConventionalFallbackIntervals();
-    }
-  }, [anilistId, epNum]);
-
-// ⚡ FIX: BACKGROUND APP FOCUS RESUME (Recovers player state from home screen freeze)
-  useEffect(() => {
-    const handleVisibilityRecovery = () => {
-      if (document.visibilityState === "visible" && videoRef.current && hlsRef.current) {
-        const frozenPosition = videoRef.current.currentTime;
-        console.log("📱 Recovering video timeline from background sleep at:", frozenPosition);
-        
-        const activeSourceUrl = hlsRef.current.url;
-        if (activeSourceUrl) {
-          hlsRef.current.detachMedia();
-          hlsRef.current.loadSource(activeSourceUrl);
-          hlsRef.current.attachMedia(videoRef.current);
-          
-          hlsRef.current.once("hlsMediaAttached" as any, () => {
-            if (videoRef.current) {
-              videoRef.current.currentTime = frozenPosition;
-              videoRef.current.play().catch(() => {});
-            }
-          });
-        }
-      }
-    };
-
-    document.addEventListener("visibilitychange", handleVisibilityRecovery);
-    return () => document.removeEventListener("visibilitychange", handleVisibilityRecovery);
-  }, []);
-
-  useEffect(() => {
-    const id = parseInt(anilistId, 10);
-    const epFloat = parseFloat(epNum);
-    if (!id || isNaN(id)) return;
-
-    let cancelled = false;
-
-    async function run() {
       try {
-        setLoading(true);
-        setError(null);
-        setSkipIntervals([]);
-        setCurrentActiveSkip(null);
-        setShowSkipButton(false);
-        lastSkipTypeRef.current = null;
-        isNavigatingRef.current = false;
-
-        let epData: any = null;
-        const storageCacheKey = `miruro_episodes_vault_${id}`;
-
-        if (episodesCacheRef.current?.id === anilistId) {
-          epData = episodesCacheRef.current.data;
-        } else {
-          // Check physical local device storage cache first!
-          const offlineDataStr = typeof window !== "undefined" ? localStorage.getItem(storageCacheKey) : null;
-          if (offlineDataStr) {
-            try {
-              const parsedCache = JSON.parse(offlineDataStr);
-              // Keeps the data offline without an API network ping if it's less than 4 hours old
-              if (parsedCache.timestamp && Date.now() - parsedCache.timestamp < 4 * 60 * 60 * 1000) {
-                epData = parsedCache.data;
-                episodesCacheRef.current = { id: anilistId, data: epData };
-              }
-            } catch {
-              epData = null;
-            }
-          }
-
-          // If no cache exists, make a normal network request
-          if (!epData) {
-            const res = await fetch(`${BACKEND_API}/episodes/${id}`);
-            if (res.ok) {
-              epData = await res.json();
-              episodesCacheRef.current = { id: anilistId, data: epData };
-              
-              // Write a background copy for instant future loads
-              if (typeof window !== "undefined") {
-                localStorage.setItem(storageCacheKey, JSON.stringify({ data: epData, timestamp: Date.now() }));
-              }
-            }
-          }
-        }
-
-        if (epData) {
-          const providerGroup = epData?.results?.providers || epData?.providers || {};
-          const discovered = Object.keys(providerGroup).filter(
-            (k) => k !== "subtitles" && k !== "banners"
-          );
-          if (!cancelled) setAvailableProviders(discovered);
-
-          const { subList, dubList } = extractEpisodeLists(epData, provider);
-          const activeList = activeCategory === "dub" ? dubList : subList;
-          const sorted = [...activeList].sort((a, b) => a.number - b.number);
-          if (!cancelled) setEpisodes(sorted);
-
-          const subNode = subList.find((e) => Number(e.number) === epFloat);
-          const dubNode = dubList.find((e) => Number(e.number) === epFloat);
-
-          if (!cancelled) {
-            setSubSlug(subNode ? subNode.slug ?? subNode.id : null);
-            setDubSlug(dubNode ? dubNode.slug ?? dubNode.id : null);
-            setHasDubAvailable(dubList.length > 0);
-
-            const matchedNode = activeList.find((e) => Number(e.number) === epFloat);
-            if (matchedNode) {
-              if (matchedNode.image) setEpisodeSnapshot(matchedNode.image);
-              setEpisodeTitle(matchedNode.title || `Episode ${matchedNode.number}`);
-              setEpisodeDesc(matchedNode.description || "");
-            }
-          }
-
-          try {
-            const infoRes = await fetch(`${BACKEND_API}/info/${id}`);
-            if (infoRes.ok) {
-              const infoData = await infoRes.json();
-              const showTitle =
-                infoData?.results?.title?.english  ??
-                infoData?.results?.title?.romaji   ??
-                infoData?.title?.english           ??
-                infoData?.title?.romaji;
-
-              if (showTitle && !cancelled) setAnimeTitle(showTitle);
-            }
-          } catch {}
-        }
-
-        let targetStreamUrl = "";
-        let targetReferer   = "https://kwik.cx/";
-        let selectedProvider = provider;
-
-        const fallbackQueue = Array.from(new Set([
-          provider,
-          ...STABILITY_PRIORITY,
-          ...(epData ? Object.keys(epData?.results?.providers || epData?.providers || {}) : []),
-        ]));
-
-        for (const provKey of fallbackQueue) {
-          if (cancelled) return;
-
-          let slug = "";
-          if (epData) {
-            const { subList, dubList } = extractEpisodeLists(epData, provKey);
-            const list = activeCategory === "dub" ? dubList : subList;
-            const match = list.find((e) => Number(e.number) === epFloat);
-            if (match) {
-              slug = match.id.includes("/")
-                ? match.id.split("/").pop() ?? match.id
-                : match.id;
-            }
-          }
-
-          if (!slug) continue;
-
-          try {
-            if (!cancelled) setStatus(`Routing via [${provKey.toUpperCase()}]...`);
-            const watchRes = await fetch(
-              `${BACKEND_API}/watch/${provKey}/${id}/${activeCategory}/${encodeURIComponent(slug)}`
-            );
-            if (!watchRes.ok) throw new Error(`${watchRes.status}`);
-
-            const data = await watchRes.json();
-            let url = data?.results?.bestStream?.url ?? data?.bestStream?.url;
-            let ref = data?.results?.bestStream?.referer ?? data?.bestStream?.referer;
-
-            if (!url) {
-              const streams = (data?.results?.streams ?? data?.streams ?? []) as any[];
-              const chosen = streams.find((s) => s.type === "hls" && s.url);
-              if (chosen) { url = chosen.url; if (chosen.referer) ref = chosen.referer; }
-            }
-
-            if (url) {
-              targetStreamUrl  = url;
-              if (ref) targetReferer = ref;
-              selectedProvider = provKey;
-              break;
-            }
-          } catch {
-            console.warn(`[watch] Provider [${provKey}] failed, trying next...`);
-          }
-        }
-
-        if (!targetStreamUrl) {
-          throw new Error("All providers failed. Try switching the audio track or refreshing.");
-        }
-        if (cancelled) return;
-
-        if (selectedProvider !== provider) {
-          const p = new URLSearchParams(searchParams.toString());
-          p.set("provider", selectedProvider);
-          router.replace(`${pathname}?${p.toString()}`);
-        }
-
-        let initialTime = 0;
-        if (forceStartFromZeroRef.current) {
-          forceStartFromZeroRef.current = false;
-          savedTimeRef.current = 0;
-        } else if (savedTimeRef.current > 0) {
-          initialTime = savedTimeRef.current;
-          savedTimeRef.current = 0;
-        } else {
-          try {
-            const raw = localStorage.getItem("streamanime_watch_history");
-            if (raw) {
-              const list = JSON.parse(raw);
-              const log = list.find(
-                (item: any) =>
-                  String(item.anilistId) === String(anilistId) &&
-                  String(item.episodeNumber) === String(epNum)
-              );
-              if (log && log.currentTime > 5) {
-                if (!log.duration || log.duration - log.currentTime > 15) {
-                  initialTime = log.currentTime;
-                }
-              }
-            }
-          } catch {}
-        }
-
-        const proxyUrl =
-          `/api/stream-proxy` +
-          `?url=${encodeURIComponent(targetStreamUrl)}` +
-          `&referer=${encodeURIComponent(targetReferer)}`;
-
-        destroyHls();
-        if (cancelled) return;
-
-        const { default: Hls } = await import("hls.js");
-        if (cancelled || !videoRef.current) return;
-
-        if (Hls.isSupported()) {
-          let codecRecoveries = 0;
-          let mediaRecoveries = 0;
-
-          const hls = new Hls({
-            enableWorker:             false,
-            preferManagedMediaSource: false,
-            startLevel:               -1,
-            maxBufferLength:          30,
-            maxMaxBufferLength:       60,
-            backBufferLength:         30,
-            maxBufferHole:            0.8,
-            nudgeMaxRetry:            5,
-            fragLoadingTimeOut:       20000,
-            fragLoadingMaxRetry:      4,
-          });
-
-          hlsRef.current = hls;
-          hls.loadSource(proxyUrl);
-          hls.attachMedia(videoRef.current);
-
-          hls.on(Hls.Events.MANIFEST_PARSED, () => {
-            if (cancelled) return;
-            setLoading(false);
-            if (videoRef.current) {
-              videoRef.current.currentTime = initialTime;
-            }
-            if (autoplay && videoRef.current) {
-              videoRef.current.play().catch(() => {});
-            }
-
-            if (videoRef.current) {
-              const textTracks = videoRef.current.textTracks;
-              for (let i = 0; i < textTracks.length; i++) {
-                textTracks[i].mode = captionsEnabled ? "showing" : "hidden";
-              }
-            }
-          });
-
-          hls.on(Hls.Events.ERROR, (_: any, data: any) => {
-            if (!data.fatal) return;
-            if (data.details === "bufferAddCodecError") {
-              if (codecRecoveries === 0) {
-                codecRecoveries++;
-                hls.currentLevel = 0;
-                hls.recoverMediaError();
-              } else {
-                if (!cancelled) {
-                  setError(`Unsupported codec. Try refreshing.`);
-                  setLoading(false);
-                }
-                destroyHls();
-              }
-              return;
-            }
-            if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
-              hls.startLoad();
-              return;
-            }
-            if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
-              if (mediaRecoveries === 0) {
-                mediaRecoveries++;
-                hls.recoverMediaError();
-              } else if (mediaRecoveries === 1) {
-                mediaRecoveries++;
-                hls.swapAudioCodec();
-                hls.recoverMediaError();
-              } else {
-                if (!cancelled) {
-                  setError(`Playback failed. Try reloading.`);
-                  setLoading(false);
-                }
-                destroyHls();
-              }
-              return;
-            }
-            if (!cancelled) {
-              setError(`Fatal error: ${data.details}`);
-              setLoading(false);
-            }
-            destroyHls();
-          });
-
-        } else if (videoRef.current.canPlayType("application/vnd.apple.mpegurl")) {
-          videoRef.current.src = proxyUrl;
-          videoRef.current.addEventListener("loadedmetadata", () => {
-            if (cancelled) return;
-            setLoading(false);
-            if (videoRef.current) videoRef.current.currentTime = initialTime;
-            if (autoplay) videoRef.current?.play().catch(() => {});
-          }, { once: true });
-        } else {
-          throw new Error("Browser does not support HLS playback.");
-        }
-
-      } catch (err: any) {
-        if (!cancelled) {
-          setError(err.message ?? "Pipeline linking failed.");
-          setLoading(false);
-        }
-      }
+        videoRef.current.onerror = null;
+        videoRef.current.onloadedmetadata = null;
+        videoRef.current.src = "";
+        videoRef.current.load();
+      } catch {}
     }
+  }, []);
 
-    run();
-    return () => { cancelled = true; };
-  }, [provider, anilistId, activeCategory, currentSlug, epNum, destroyHls, pathname, router, searchParams, autoplay, captionsEnabled, commitPlaybackSessionToStorageLog]);
+  // Compute route / media identity strings (used by both stream hooks and reset effect)
+  const mediaIdentity = `${isExternalMedia ? "external" : "anime"}:${mediaType}:${anilistId}`;
+  const routeIdentity = `${mediaIdentity}:${seasonNum}:${epNum}:${provider}:${activeCategory}:${currentSlug}`;
+  // Keep the ref in sync every render so the stream hooks can compare it synchronously
+  activeRouteIdentityRef.current = routeIdentity;
 
-  const totalEpisodesCount = episodes.length;
-  const chunkRanges: { start: number; end: number; label: string }[] = [];
+  // ── Route-transition boundary ──────────────────────────────────────────
+  // Resets transient player values on every route change. This effect MUST be
+  // registered BEFORE the stream pipeline hooks below: the pipelines snapshot
+  // playbackGenerationRef.current on entry and abort as "stale" on every await
+  // if the generation ever differs. When this effect ran after them (as it did
+  // after the big page.tsx → hooks/components refactor), the generation bump
+  // happened after the snapshot, so every fresh load self-aborted before
+  // episodes/sources ever loaded. Ordering here mirrors the original monolithic
+  // page (reset effect → pipeline hooks).
+  useEffect(() => {
+    const mediaChanged = previousMediaIdentityRef.current !== mediaIdentity;
+    previousMediaIdentityRef.current = mediaIdentity;
+    playbackGenerationRef.current += 1;
 
-  if (totalEpisodesCount > 30) {
-    const step = totalEpisodesCount > 110 ? 100 : 30;
-    for (let i = 0; i < totalEpisodesCount; i += step) {
-      const s = i + 1, e = Math.min(i + step, totalEpisodesCount);
-      chunkRanges.push({ start: s, end: e, label: `${s}-${e}` });
+    savedTimeRef.current = 0;
+    forceStartFromZeroRef.current = false;
+    isNavigatingRef.current = false;
+    destroyHls();
+    resetSkipState();
+
+    setIsPlaying(false);
+    playbackHasStartedRef.current = false;
+    setPlaybackHasStarted(false);
+    setLoading(true);
+    setError(null);
+    setStatus("Loading current route...");
+    setExternalStreamUrl(null);
+    setSubtitleTracks([]);
+    setCurrentCaption("");
+    setCurrentTime(0);
+    setDuration(0);
+    setBufferedPercent(0);
+    setVideoQuality("Auto");
+    setEpisodeTitle(isExternalMovie ? "Full Feature Film" : `Episode ${epNum}`);
+    setEpisodeDesc("");
+    setEpisodeSnapshot("");
+    setMediaAirDate("");
+
+    if (mediaChanged) {
+      episodesCacheRef.current = null;
+      setEpisodes([]);
+      setSubSlug(null);
+      setDubSlug(null);
+      setHasDubAvailable(false);
+      setAvailableProviders([]);
+      setTmdbShowId(null);
+      setTmdbSeasons([]);
+      setSelectedTmdbSeason(Number(seasonNum) || 1);
+      setTmdbSeasonLoading(false);
+      setTmdbEpisodeMeta({});
+      setWatchProviders([]);
+      setAnimeTitle(isExternalMovie ? "Movie" : isExternalMedia ? "TV Show" : "Anime Series");
     }
-  }
+  }, [
+    routeIdentity,
+    mediaIdentity,
+    isExternalMedia,
+    isExternalMovie,
+    destroyHls,
+    epNum,
+    isNavigatingRef,
+    resetSkipState,
+    seasonNum,
+    setBufferedPercent,
+    setCurrentCaption,
+    setCurrentTime,
+    setDuration,
+    setIsPlaying,
+    setLoading,
+    setSubtitleTracks,
+    setVideoQuality,
+  ]);
+
+  // Anime Stream Pipeline Hook
+  useAnimeStream({
+    isExternalMedia,
+    anilistId,
+    epNum,
+    seasonNum,
+    activeCategory,
+    provider,
+    currentSlug,
+    mediaType,
+    routeIdentity,
+    activeRouteIdentityRef,
+    playbackGenerationRef,
+    sourceAttemptRef,
+    sourceStateRef,
+    activeSourceUrlRef,
+    playbackHasStartedRef,
+    playbackSourceReadyRef,
+    mediaFailureHandlerRef,
+    mediaSuccessHandlerRef,
+    mediaProgressHandlerRef,
+    streamTimeoutRef,
+    stallRecoveryTimerRef,
+    savedTimeRef,
+    forceStartFromZeroRef,
+    episodesCacheRef,
+    videoRef,
+    hlsRef,
+    destroyHls,
+    setLoading,
+    setError,
+    setStatus,
+    setAvailableProviders,
+    setEpisodes,
+    setSubSlug,
+    setDubSlug,
+    setHasDubAvailable,
+    setEpisodeSnapshot,
+    setEpisodeTitle,
+    setEpisodeDesc,
+    setAnimeTitle,
+    setSubtitleTracks,
+    setVideoQuality,
+    resetSkipState,
+    autoplay,
+    captionsEnabled,
+    pathname,
+    router,
+    queryString,
+  });
+
+  // External Movie/TV Stream Pipeline Hook
+  useExternalStream({
+    isExternalMedia,
+    isExternalMovie,
+    anilistId,
+    epNum,
+    seasonNum,
+    activeCategory,
+    provider,
+    currentSlug,
+    mediaType,
+    routeIdentity,
+    activeRouteIdentityRef,
+    playbackGenerationRef,
+    sourceAttemptRef,
+    sourceStateRef,
+    activeSourceUrlRef,
+    playbackHasStartedRef,
+    playbackSourceReadyRef,
+    mediaFailureHandlerRef,
+    mediaSuccessHandlerRef,
+    mediaProgressHandlerRef,
+    streamTimeoutRef,
+    stallRecoveryTimerRef,
+    savedTimeRef,
+    forceStartFromZeroRef,
+    videoRef,
+    hlsRef,
+    destroyHls,
+    setLoading,
+    setError,
+    setStatus,
+    setExternalStreamUrl,
+    setAvailableProviders,
+    setEpisodeTitle,
+    setVideoQuality,
+    resetSkipState,
+    autoplay,
+    pathname,
+    router,
+    queryString,
+  });
 
   useEffect(() => {
-    if (!chunkRanges.length) return;
-    const n = parseFloat(epNum);
-    const idx = chunkRanges.findIndex((r) => n >= r.start && n <= r.end);
-    if (idx !== -1) setActiveRangeIndex(idx);
-  }, [epNum, episodes]);
+    return () => {
+      destroyHls();
+      resetSkipState();
+    };
+  }, [destroyHls, resetSkipState]);
 
-  const currentDisplayedEpisodes =
-    chunkRanges.length > 0
-      ? episodes.slice(chunkRanges[activeRangeIndex].start - 1, chunkRanges[activeRangeIndex].end)
-      : episodes;
+  // Sidebar Seasons & Episodes Resolution
+  const activeTmdbSeasonInfo = tmdbSeasons.find((s) => s.number === selectedTmdbSeason);
 
-  const cleanDescription = (html?: string) => {
-    if (!html) return "No description available.";
-    return html.replace(/<\/?[^>]+(>|$)/g, "");
-  };
+  const episodesInSeason = isExternalMedia
+    ? episodes
+    : activeTmdbSeasonInfo
+    ? episodes.filter(
+        (e) =>
+          Number(e.number) > activeTmdbSeasonInfo.absoluteOffset &&
+          Number(e.number) <= activeTmdbSeasonInfo.absoluteOffset + activeTmdbSeasonInfo.episodeCount
+      )
+    : episodes;
 
-  const parsedEpNum = parseFloat(epNum);
-  const hasPrevEpisode = episodes.some((e) => Number(e.number) < parsedEpNum);
-  const hasNextEpisodeElement = episodes.some((e) => Number(e.number) > parsedEpNum);
+  const displayEpisodes: EpisodeNode[] = episodesInSeason.map((e) => {
+    const meta = tmdbEpisodeMeta[Number(e.number)];
+    if (!meta) return e;
+    return {
+      ...e,
+      title: meta.title || e.title,
+      description: meta.description || e.description,
+      image: meta.image || e.image,
+      runtimeMinutes: meta.runtimeMinutes ?? e.runtimeMinutes,
+    };
+  });
+
+  const totalEpisodesCount = displayEpisodes.length;
+  const currentDisplayedEpisodes = displayEpisodes;
+
+  // Auto-scroll the season strip
+  useEffect(() => {
+    if (!seasonListRef.current || tmdbSeasons.length === 0) return;
+    const el = seasonListRef.current.querySelector<HTMLElement>(
+      `[data-season-number="${selectedTmdbSeason}"]`
+    );
+    if (!el) return;
+    const raf = requestAnimationFrame(() => {
+      el.scrollIntoView({ block: "nearest", inline: "center", behavior: "auto" });
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [selectedTmdbSeason, tmdbSeasons.length]);
+
+  // Auto-scroll the episode grid
+  useEffect(() => {
+    if (!episodeListRef.current || tmdbSeasonLoading || currentDisplayedEpisodes.length === 0) return;
+    const el = episodeListRef.current.querySelector<HTMLElement>(
+      `[data-episode-number="${epNum}"]`
+    );
+    if (!el) return;
+    const raf = requestAnimationFrame(() => {
+      el.scrollIntoView({ block: "center", inline: "nearest", behavior: "auto" });
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [epNum, tmdbSeasonLoading, currentDisplayedEpisodes.length]);
+
+  // Retry Callback
+  const onRetryEpisode = useCallback(() => {
+    const retryIdentity = `${anilistId}:${seasonNum || "1"}:${epNum}:${activeCategory}`;
+    const sessionCache = loadSourceCache();
+    Object.keys(sessionCache).forEach((key) => {
+      if (key.includes(retryIdentity)) delete sessionCache[key];
+    });
+    saveSourceCache(sessionCache);
+    const persistentCache = loadPersistentSourceCache();
+    Object.keys(persistentCache).forEach((key) => {
+      if (key.includes(retryIdentity)) delete persistentCache[key];
+    });
+    savePersistentSourceCache(persistentCache);
+    const retryParams = new URLSearchParams(queryString);
+    retryParams.set("retry", String(Date.now()));
+    router.replace(`${pathname}?${retryParams.toString()}`);
+  }, [anilistId, seasonNum, epNum, activeCategory, queryString, pathname, router]);
+
+  // Category & Provider Change Actions
+  const onCategoryChange = useCallback(
+    (cat: "sub" | "dub") => {
+      handleCategoryChange(cat, {
+        subSlug,
+        dubSlug,
+        videoElement: videoRef.current,
+        savedTimeRef,
+        destroyHls,
+        setLoading,
+        setIsPlaying,
+      });
+    },
+    [handleCategoryChange, subSlug, dubSlug, destroyHls, setIsPlaying]
+  );
+
+  const onProviderChange = useCallback(
+    (prov: string) => {
+      handleProviderChange(prov, {
+        videoElement: videoRef.current,
+        savedTimeRef,
+        destroyHls,
+        setLoading,
+        setIsPlaying,
+      });
+    },
+    [handleProviderChange, destroyHls, setIsPlaying]
+  );
 
   return (
-    <main className="min-h-screen bg-neutral-950 text-neutral-100 font-sans antialiased pb-20 selection:bg-orange-500 selection:text-white overflow-x-hidden pt-24 px-6 md:px-12">
-      
-      {!showControls && isPlaying && isFullscreen && (
-        <style dangerouslySetInnerHTML={{__html: `
-          * { cursor: none !important; }
-        `}} />
-      )}
-
-      {/* RE-ENGINEERED COMPACT PREMIUM STYLING RULES */}
+    <main className="min-h-screen bg-black text-neutral-100 font-sans pb-24 selection:bg-orange-500 selection:text-white">
       <style dangerouslySetInnerHTML={{__html: `
-        @keyframes netflixCountdown {
-          0% { width: 0%; }
-          100% { width: 100%; }
-        }
-        .animate-netflix-countdown {
-          animation: netflixCountdown ${SKIP_COUNTDOWN_DURATION}ms linear forwards;
-        }
-        video::-webkit-media-text-track-container {
-          display: none !important;
-        }
-        video::cue {
-          color: transparent !important;
-          background: transparent !important;
-        }
-        
-        /* 64x64px Clean Interactive Mobile Touch Box Extension */
-        .mobile-expand-hitbox {
-          position: relative;
-        }
-        .mobile-expand-hitbox::after {
-          content: '';
-          position: absolute;
-          top: 50%;
-          left: 50%;
-          transform: translate(-50%, -50%);
-          min-width: 64px;
-          min-height: 64px;
-          width: 180%;
-          height: 180%;
+        /* Slider styling */
+        input[type=range]::-webkit-slider-thumb {
+          -webkit-appearance: none;
+          height: 14px;
+          width: 14px;
+          border-radius: 50%;
+          background: #f97316;
+          border: 2px solid rgba(255,255,255,0.95);
+          box-shadow: 0 0 0 3px rgba(249,115,22,0.2);
           cursor: pointer;
         }
-
-        .custom-sandbox-fullscreen {
-          position: fixed !important;
-          top: 0 !important;
-          left: 0 !important;
-          right: 0 !important;
-          bottom: 0 !important;
-          width: 100vw !important;
-          height: 100vh !important;
-          z-index: 99999 !important;
-          border-radius: 0px !important;
-          margin: 0px !important;
-          background: #000000 !important;
+        input[type=range]::-moz-range-thumb {
+          height: 14px;
+          width: 14px;
+          border-radius: 50%;
+          background: #f97316;
+          border: 2px solid rgba(255,255,255,0.95);
+          box-shadow: 0 0 0 3px rgba(249,115,22,0.2);
+          cursor: pointer;
+        }
+        /* Seek bar: kill the native track so only our custom progress divs show —
+           without this, mobile browsers render their own white/blue track under it. */
+        input[type=range].seek-bar-input {
+          -webkit-appearance: none;
+          appearance: none;
+          background: transparent;
+        }
+        input[type=range].seek-bar-input::-webkit-slider-runnable-track {
+          background: transparent;
+          border: none;
+          box-shadow: none;
+        }
+        input[type=range].seek-bar-input::-moz-range-track {
+          background: transparent;
+          border: none;
+          box-shadow: none;
+        }
+        input[type=range].seek-bar-input::-moz-range-progress {
+          background: transparent;
         }
       `}} />
 
-      <header className="fixed top-0 inset-x-0 h-16 bg-gradient-to-b from-black/90 to-transparent backdrop-blur-md z-50 flex items-center justify-between px-6 md:px-12 border-b border-neutral-900/40">
-        <div className="flex items-center space-x-12">
-          <Link href="/" className="text-2xl font-black tracking-tighter text-orange-500 hover:opacity-90 transition">
-            STREAMANIME
-          </Link>
-          <nav className="hidden md:flex items-center space-x-8 text-sm font-medium text-neutral-400">
-            <Link href="/" className="transition hover:text-neutral-200">Home</Link>
-            <Link href="/?feed=upcoming" className="transition hover:text-neutral-200">Upcoming</Link>
-            <Link href="/?feed=recommendations" className="transition hover:text-neutral-200">Recommendations</Link>
-            <Link href="/?feed=popular" className="transition hover:text-neutral-200">Popular</Link>
-          </nav>
-        </div>
+      <TopBar
+        navItems={[
+          { key: "home", label: "Home", href: "/" },
+          { key: "upcoming", label: "Upcoming", href: "/?feed=upcoming" },
+          { key: "recommendations", label: "Recommendations", href: "/?feed=recommendations" },
+          { key: "popular", label: "Popular", href: "/?feed=popular" },
+        ]}
+        searchMode="redirect"
+        searchPlaceholder="Search titles, genres..."
+        onSearchTrigger={() => router.push("/")}
+        profileMode="simple"
+        profile={currentProfile}
+        onProfileClick={handleSignOutAction}
+      />
 
-        <div className="flex items-center space-x-6 flex-1 justify-end">
-          <div className="relative max-w-xs w-full hidden sm:block ml-6">
-            <div className="absolute inset-y-0 left-3 flex items-center pointer-events-none">
-              <img src="/Assets/search-icon.png" alt="Search" className="w-4 h-4 object-contain invert brightness-200 contrast-200 opacity-90" />
-            </div>
-            <input
-              type="text"
-              placeholder="Search titles, genres..."
-              onClick={() => router.push("/")}
-              className="w-full pl-10 pr-4 py-1.5 rounded-md bg-neutral-900/90 border border-neutral-800 text-sm placeholder-neutral-500 focus:outline-none focus:border-orange-500 focus:bg-neutral-900 transition duration-200 cursor-pointer"
-            />
-          </div>
-
-          {currentProfile && (
-            <div className="relative group flex items-center">
-              <button 
-                onClick={handleSignOutAction}
-                className="flex items-center space-x-2 focus:outline-none cursor-pointer group"
-                title="Click to Switch Profile / Sign Out"
-              >
-                <div className="w-8 h-8 rounded bg-neutral-800 overflow-hidden border border-neutral-700 group-hover:border-orange-500 transition duration-200 shadow-md">
-                  <img 
-                    src={currentProfile.avatar_url} 
-                    alt={currentProfile.name} 
-                    className="w-full h-full object-cover group-hover:scale-105 transition duration-200"
-                  />
-                </div>
-                <span className="hidden lg:inline text-xs font-semibold text-neutral-400 group-hover:text-white transition max-w-[90px] truncate">
-                  {currentProfile.name}
-                </span>
-              </button>
-            </div>
-          )}
-        </div>
-      </header>
-
-      <div className="max-w-7xl mx-auto space-y-6">
-
-        <div className="flex items-center justify-between border-b border-neutral-900 pb-3">
-          <Link href={`/anime/${anilistId}`} className="text-xs font-mono uppercase tracking-widest text-neutral-400 hover:text-orange-500 transition">
-            Back to Catalog Info
-          </Link>
-          <span className="text-xs font-mono text-white font-bold truncate max-w-md">{animeTitle}</span>
-        </div>
-
-        {/* INTEGRATED THEATRE VIEWPORT SYSTEM */}
-        <div
-          ref={playerContainerRef}
-          onMouseMove={triggerControlsActivity}
-          onTouchStart={triggerControlsActivity}
-          className={`relative w-full aspect-video bg-black rounded-xl overflow-hidden border border-neutral-800/60 group shadow-[0_0_50px_rgba(0,0,0,0.8)] transition-all duration-300 ring-1 ring-white/5 select-none ${
-            isFullscreen ? "custom-sandbox-fullscreen" : ""
-          }`}
+      <div className="max-w-screen-2xl mx-auto px-4 sm:px-6 xl:px-8 pt-16 sm:pt-[4.75rem]">
+        <Link
+          href={`/anime/${anilistId}`}
+          className="inline-flex items-center gap-1.5 text-xs font-medium text-neutral-500 hover:text-neutral-200 transition-colors mb-3"
         >
-          {loading && (
-            <div className="absolute inset-0 flex flex-col items-center justify-center bg-neutral-950/95 z-40 space-y-4">
-              <div className="animate-spin rounded-full h-8 w-8 border-2 border-orange-500 border-t-transparent" />
-              <p className="text-xs uppercase tracking-widest text-neutral-400 font-mono font-medium animate-pulse">{status}</p>
-            </div>
-          )}
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.25">
+            <path d="M15 18l-6-6 6-6" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+          {animeTitle}
+        </Link>
 
-          {error && (
-            <div className="absolute inset-0 flex flex-col items-center justify-center bg-neutral-950 z-40 p-6 text-center space-y-2">
-              <div className="text-xs text-red-400 font-mono bg-neutral-900 border border-neutral-800 px-5 py-3 rounded max-w-md shadow-inner">
-                {error}
-              </div>
-            </div>
-          )}
+        <div className="flex flex-col lg:flex-row lg:items-start gap-6 lg:gap-10">
+          {/* MAIN COLUMN */}
+          <div className="min-w-0 flex-1 space-y-6">
+            {/* Player sits flat against the page — no card, no glow, no frame. */}
+            <WatchPlayer
+              playerContainerRef={playerContainerRef}
+              videoRef={videoRef}
+              triggerControlsActivity={triggerControlsActivity}
+              isFullscreen={isFullscreen}
+              loading={loading}
+              setLoading={setLoading}
+              error={error}
+              setError={setError}
+              setStatus={setStatus}
+              episodeSnapshot={episodeSnapshot}
+              onRetryEpisode={onRetryEpisode}
+              handleVideoClick={handleVideoClick}
+              skipSeconds={skipSeconds}
+              seekFlash={seekFlash}
+              setSeekFlash={setSeekFlash}
+              playbackHasStartedRef={playbackHasStartedRef}
+              playbackSourceReadyRef={playbackSourceReadyRef}
+              mediaProgressHandlerRef={mediaProgressHandlerRef}
+              mediaSuccessHandlerRef={mediaSuccessHandlerRef}
+              mediaFailureHandlerRef={mediaFailureHandlerRef}
+              stallRecoveryTimerRef={stallRecoveryTimerRef}
+              activeSourceUrlRef={activeSourceUrlRef}
+              provider={provider}
+              subtitleTracks={subtitleTracks}
+              isCropFill={isCropFill}
+              playbackHasStarted={playbackHasStarted}
+              setPlaybackHasStarted={setPlaybackHasStarted}
+              isPlaying={isPlaying}
+              setIsPlaying={setIsPlaying}
+              duration={duration}
+              setDuration={setDuration}
+              setBufferedPercent={setBufferedPercent}
+              setVideoQuality={setVideoQuality}
+              skipIntervals={skipIntervals}
+              fetchSkipTimestamps={fetchSkipTimestamps}
+              commitPlaybackSessionToStorageLog={commitPlaybackSessionToStorageLog}
+              navigateToNextEpisode={navigateToNextEpisode}
+              handleTimeUpdate={handleTimeUpdate}
+              animeTitle={animeTitle}
+              episodeTitle={episodeTitle}
+              epNum={epNum}
+              isExternalMovie={isExternalMovie}
+              captionsEnabled={captionsEnabled}
+              applyCaptionMode={applyCaptionMode}
+              isPiPActive={isPiPActive}
+              togglePictureInPicture={togglePictureInPicture}
+              showSettingsMenu={showSettingsMenu}
+              setShowSettingsMenu={setShowSettingsMenu}
+              videoQuality={videoQuality}
+              playbackRate={playbackRate}
+              applyPlaybackRate={applyPlaybackRate}
+              settingsMenuRef={settingsMenuRef}
+              currentCaption={currentCaption}
+              currentActiveSkip={currentActiveSkip}
+              showSkipButton={showSkipButton}
+              executeManualSkipSegment={executeManualSkipSegment}
+              showControls={showControls}
+              togglePlay={togglePlay}
+              currentTime={currentTime}
+              bufferedPercent={bufferedPercent}
+              handleScrub={handleScrub}
+              formatTime={formatTime}
+              volume={volume}
+              isMuted={isMuted}
+              setVolumeLevel={setVolumeLevel}
+              toggleMute={toggleMute}
+              showVolumeSlider={showVolumeSlider}
+              revealVolumeSlider={revealVolumeSlider}
+              scheduleHideVolumeSlider={scheduleHideVolumeSlider}
+              volumeControlRef={volumeControlRef}
+              toggleFullscreen={toggleFullscreen}
+              toggleCropFill={toggleCropFill}
+              autoplay={autoplay}
+              toggleAutoplayState={toggleAutoplayState}
+              autoskip={autoskip}
+              toggleAutoskipState={toggleAutoskipState}
+              autonext={autonext}
+              toggleAutonextState={toggleAutonextState}
+              hasNextEpisodeElement={hasNextEpisodeElement}
+            />
 
-          <video
-            ref={videoRef}
-            onClick={handleVideoClick}
-            onDoubleClick={toggleFullscreen}
-            onTimeUpdate={handleTimeUpdate}
-            onDurationChange={() => {
-              if (videoRef.current?.duration) {
-                const totalDur = videoRef.current.duration;
-                setDuration(totalDur);
-                commitPlaybackSessionToStorageLog(videoRef.current.currentTime, totalDur);
-                if (totalDur > 60 && !isNaN(totalDur) && skipIntervals.length === 0) {
-                  fetchTimestampsFromAniSkip(totalDur);
-                }
-              }
-            }}
-            onPlay={() => setIsPlaying(true)}
-            onPause={() => setIsPlaying(false)}
-            onEnded={navigateToNextEpisode}
-            controls={false}
-            playsInline
-            webkit-playsinline="true"
-            className={`w-full h-full cursor-pointer bg-black ${isCropFill ? "object-cover" : "object-contain"}`}
-          />
+            <EpisodeInfo
+              isExternalMovie={isExternalMovie}
+              isExternalMedia={isExternalMedia}
+              animeTitle={animeTitle}
+              epNum={epNum}
+              episodeTitle={episodeTitle}
+              mediaAirDate={mediaAirDate}
+              watchProviders={watchProviders}
+              navigateToPrevEpisode={navigateToPrevEpisode}
+              navigateToNextEpisode={navigateToNextEpisode}
+              hasPrevEpisode={hasPrevEpisode}
+              hasNextEpisodeElement={hasNextEpisodeElement}
+              handleDownload={handleDownload}
+              downloadProgress={downloadProgress}
+              downloadedFlag={downloadedFlag}
+              activeCategory={activeCategory as "sub" | "dub"}
+              handleCategoryChange={onCategoryChange}
+              hasDubAvailable={hasDubAvailable}
+              provider={provider}
+              handleProviderChange={onProviderChange}
+              availableProviders={availableProviders}
+              autoplay={autoplay}
+              toggleAutoplayState={toggleAutoplayState}
+              autoskip={autoskip}
+              toggleAutoskipState={toggleAutoskipState}
+              autonext={autonext}
+              toggleAutonextState={toggleAutonextState}
+              episodeInfoExpanded={episodeInfoExpanded}
+              setEpisodeInfoExpanded={setEpisodeInfoExpanded}
+              episodeDesc={episodeDesc}
+              isPlaying={isPlaying}
+              togglePlay={togglePlay}
+            />
 
-          {/* PREMIUM TOP HUD OVERLAY PANEL — Title left, Volume + CC right (fullscreen removed) */}
-          <div 
-            className={`absolute top-0 inset-x-0 bg-gradient-to-b from-black/90 via-black/50 to-transparent p-4 sm:p-6 pb-14 z-30 transition-all duration-300 pointer-events-none flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
-              showControls ? "opacity-100 translate-y-0" : "opacity-0 -translate-y-2"
-            }`}
-          >
-            <div className="text-sm md:text-base font-bold text-neutral-100 tracking-wide drop-shadow-[0_2px_4px_rgba(0,0,0,0.9)] truncate max-w-xl pointer-events-none">
-              {epNum}. {episodeTitle || `Episode ${epNum}`}
-            </div>
-
-            {/* Volume + CC controls — shifted right after fullscreen removal */}
-            <div className="flex items-center space-x-4 self-end sm:self-auto justify-end ml-auto pointer-events-auto">
-              {/* Volume HUD Block */}
-              <div className="flex items-center space-x-2 bg-black/40 backdrop-blur-md px-3 py-1.5 rounded-lg border border-neutral-800/40">
-                <button onClick={toggleMute} className="mobile-expand-hitbox text-[10px] font-mono font-bold text-neutral-400 hover:text-neutral-200 transition tracking-wider">
-                  {isMuted ? "UNMUTE" : "VOLUME"}
-                </button>
-                <input
-                  type="range" min={0} max={1} step={0.01} value={isMuted ? 0 : volume} onChange={handleVolumeChange}
-                  className="w-16 sm:w-20 h-1 bg-neutral-800 appearance-none cursor-pointer accent-orange-500 rounded-full" />
-              </div>
-
-              {/* CC Toggle Button */}
-              <button
-                onClick={() => {
-                  const nextMode = !captionsEnabled;
-                  setCaptionsEnabled(nextMode);
-                  if (videoRef.current) {
-                    const textTracks = videoRef.current.textTracks;
-                    for (let i = 0; i < textTracks.length; i++) {
-                      textTracks[i].mode = nextMode ? "showing" : "hidden";
-                    }
-                  }
-                }}
-                className={`mobile-expand-hitbox hover:scale-105 active:scale-95 flex items-center justify-center outline-none bg-black/40 border border-neutral-800/30 p-2 rounded-lg backdrop-blur-md transition duration-200 ${
-                  captionsEnabled ? "opacity-100" : "opacity-40"
-                }`}
-                title={captionsEnabled ? "Disable Captions" : "Enable Captions"}
-              >
-                <img 
-                  src="/Assets/caption.png" 
-                  alt="Captions Toggle"
-                  style={{ width: "18px", height: "18px", filter: "invert(1) brightness(2)" }}
-                  className="object-contain"
-                />
-              </button>
-            </div>
-          </div>
-
-          {/* CENTERED KINETIC CONTROLS PLATFORM — pointer-events-none on container, auto on each button */}
-          <div 
-            className={`absolute inset-0 flex items-center justify-center z-30 transition-all duration-300 pointer-events-none gap-8 sm:gap-14 ${
-              showControls ? "opacity-100 scale-100" : "opacity-0 scale-95"
-            }`}
-          >
-            {/* Rewind 10s Trigger — background removed */}
-            <button
-              onClick={() => skipSeconds(-10)}
-              className="pointer-events-auto mobile-expand-hitbox w-14 h-14 sm:w-16 sm:h-16 flex items-center justify-center rounded-full bg-transparent hover:bg-black/20 border border-transparent hover:border-neutral-800/30 transition duration-200 group/btn transform hover:scale-110 active:scale-90 shadow-none backdrop-blur-none"
-              title="Rewind 10 Seconds"
-            >
-              <img
-                src="/Assets/backward-10.png"
-                alt="Rewind 10 Seconds"
-                style={{ width: "48px", height: "48px" }}
-                className="object-contain invert brightness-200 contrast-200"
-              />
-            </button>
-
-            {/* Core Center Play / Pause Cluster */}
-            <button
-              onClick={togglePlay}
-              className="pointer-events-auto mobile-expand-hitbox w-24 h-24 sm:w-28 sm:h-28 flex items-center justify-center bg-transparent text-white transition-all duration-200 transform hover:scale-110 active:scale-95 filter drop-shadow-[0_4px_12px_rgba(0,0,0,0.5)]"
-              title={isPlaying ? "Pause" : "Play"}
-            >
-              <img
-                src={isPlaying ? "/Assets/pause.png" : "/Assets/play.png"}
-                alt="Playback Status"
-                style={{ 
-                  width: isPlaying ? "44px" : "48px", 
-                  height: isPlaying ? "44px" : "48px",
-                  marginLeft: isPlaying ? "0px" : "6px" 
-                }}
-                className="object-contain invert brightness-200 contrast-200"
-              />
-            </button>
-
-            {/* Fast Forward 10s Trigger — background removed */}
-            <button
-              onClick={() => skipSeconds(10)}
-              className="pointer-events-auto mobile-expand-hitbox w-14 h-14 sm:w-16 sm:h-16 flex items-center justify-center rounded-full bg-transparent hover:bg-black/20 border border-transparent hover:border-neutral-800/30 transition duration-200 group/btn transform hover:scale-110 active:scale-90 shadow-none backdrop-blur-none"
-              title="Fast Forward 10 Seconds"
-            >
-              <img
-                src="/Assets/forward-10.png"
-                alt="Fast Forward 10 Seconds"
-                style={{ width: "48px", height: "48px" }}
-                className="object-contain invert brightness-200 contrast-200"
-              />
-            </button>
-          </div>
-
-          {/* MASTER SUBTITLE RENDER CONTAINER */}
-          {captionsEnabled && currentCaption && (
-            <div className="absolute inset-x-4 bottom-28 md:bottom-32 flex items-center justify-center pointer-events-none z-30 text-center">
-              <p className="px-4 py-1.5 rounded bg-black/85 text-white font-sans font-medium text-sm sm:text-base md:text-lg lg:text-xl tracking-wide max-w-[85%] border border-neutral-900/40 shadow-xl drop-shadow-md whitespace-pre-line leading-relaxed">
-                {currentCaption}
-              </p>
-            </div>
-          )}
-
-          {/* ANI-SKIP DESCRIPTOR FLOATING TRIGGER BUTTON */}
-          {currentActiveSkip && showSkipButton && !loading && (
-            <button
-              onClick={executeManualSkipSegment}
-              className="absolute bottom-28 right-8 bg-neutral-900/90 hover:bg-black text-white font-sans font-bold text-sm tracking-wide px-7 py-3.5 rounded border border-neutral-700/60 shadow-[0_4px_30px_rgba(0,0,0,0.5)] backdrop-blur-md transition-all duration-200 transform hover:scale-105 active:scale-95 z-30 overflow-hidden flex items-center justify-center min-w-[140px]"
-            >
-              <div className="absolute top-0 bottom-0 left-0 bg-neutral-950/60 animate-netflix-countdown pointer-events-none mix-blend-multiply" />
-              <span className="relative z-10 flex items-center gap-2">
-                <span className="w-1.5 h-1.5 bg-orange-500 rounded-full animate-ping" />
-                {currentActiveSkip.skipType === "op" ? "Skip Intro" : "Skip Outro"}
-              </span>
-            </button>
-          )}
-
-          {/* STREAM DECK BASE LOWER TIMELINE HUD BLOCK */}
-          <div className={`absolute inset-x-0 bottom-0 bg-gradient-to-t from-black via-black/90 to-transparent p-4 sm:p-6 pt-20 flex flex-col transition-all duration-300 z-40 pointer-events-none ${
-            showControls ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4"
-          } ${isFullscreen ? "space-y-5 pb-8" : "space-y-3"}`}>
-            
-            {/* TIMELINE TIMESTEP TRACKBAR CONTAINER */}
-            <div className="relative w-full flex items-center h-4 group/timeline pointer-events-auto">
-              <div className="absolute left-0 right-0 h-1.5 bg-neutral-800/60 rounded-full flex overflow-hidden">
-                {duration > 0 && skipIntervals.length > 0 ? (
-                  (() => {
-                    const timelineElements: React.ReactNode[] = [];
-                    let lastPosition = 0;
-                    const sortedIntervals = [...skipIntervals].sort((a, b) => a.interval.startTime - b.interval.startTime);
-
-                    sortedIntervals.forEach((item, index) => {
-                      const startPercent = (item.interval.startTime / duration) * 100;
-                      const endPercent = (item.interval.endTime / duration) * 100;
-
-                      if (startPercent > lastPosition) {
-                        timelineElements.push(
-                          <div key={`segment-pre-${index}`} className="h-full bg-neutral-800/60" style={{ width: `${startPercent - lastPosition}%` }} />
-                        );
-                      }
-                      timelineElements.push(<div key={`gap-l-${index}`} className="h-full w-[2px] bg-black shrink-0 z-10" />);
-                      timelineElements.push(
-                        <div key={`segment-skip-${index}`} className="h-full bg-neutral-700/40 relative" style={{ width: `${endPercent - startPercent}%` }} />
+            {/* UP NEXT — same visual pattern as a "Continue Watching" row: real
+                thumbnails and real per-episode progress from progressMap, not
+                filler. Desktop only; the full list already lives in the sidebar. */}
+            {!isExternalMovie && currentDisplayedEpisodes.length > 1 && (
+              <div className="hidden lg:block pt-2">
+                <h2 className="text-base font-semibold text-white mb-4">Up Next</h2>
+                <div className="flex gap-4 overflow-x-auto pb-2 scrollbar-thin scrollbar-thumb-neutral-800">
+                  {currentDisplayedEpisodes
+                    .filter((ep) => Number(ep.number) !== parseFloat(epNum))
+                    .slice(0, 10)
+                    .map((ep) => {
+                      const epSlug = ep.id.includes("/") ? ep.id.split("/").pop() : ep.id;
+                      const relativeSeason = activeTmdbSeasonInfo?.number ?? 1;
+                      const relativeNumber = activeTmdbSeasonInfo
+                        ? Number(ep.number) - activeTmdbSeasonInfo.absoluteOffset
+                        : Number(ep.number);
+                      const href = `/watch?provider=${provider}&id=${anilistId}&category=${activeCategory}&slug=${encodeURIComponent(
+                        epSlug || ""
+                      )}&epNum=${ep.number}&type=${mediaType}&season=${relativeSeason}`;
+                      const thumb = ep.image || episodeSnapshot || "https://placehold.co/400x225?text=Episode";
+                      const epPercent = progressMap[`${relativeSeason}-${relativeNumber}`]?.percent ?? 0;
+                      return (
+                        <Link key={ep.id} href={href} className="group shrink-0 w-64 rounded-md overflow-hidden bg-white/[0.03] hover:bg-white/[0.06] transition-colors">
+                          <div className="flex items-center gap-3 p-2.5">
+                            <div className="relative w-24 aspect-video rounded overflow-hidden bg-neutral-900 shrink-0">
+                              <img
+                                src={thumb}
+                                alt={`Episode ${ep.number}`}
+                                className="w-full h-full object-cover transition duration-300 group-hover:brightness-110"
+                                loading="lazy"
+                                decoding="async"
+                              />
+                              <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition flex items-center justify-center bg-black/20">
+                                <div className="w-6 h-6 rounded-full bg-white/95 flex items-center justify-center">
+                                  <svg width="9" height="9" viewBox="0 0 24 24" fill="black">
+                                    <path d="M8 5v14l11-7z" />
+                                  </svg>
+                                </div>
+                              </div>
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <p className="text-xs text-neutral-500">Season {relativeSeason} · E{relativeNumber}</p>
+                              <p className="text-sm font-medium text-neutral-200 group-hover:text-white truncate transition-colors">
+                                {ep.title || `Episode ${ep.number}`}
+                              </p>
+                            </div>
+                          </div>
+                          <div className="h-[3px] bg-white/10">
+                            {epPercent > 0 && (
+                              <div className="h-full bg-orange-500" style={{ width: `${Math.min(epPercent, 100)}%` }} />
+                            )}
+                          </div>
+                        </Link>
                       );
-                      timelineElements.push(<div key={`gap-r-${index}`} className="h-full w-[2px] bg-black shrink-0 z-10" />);
-                      lastPosition = endPercent;
-                    });
-
-                    if (lastPosition < 100) {
-                      timelineElements.push(<div key="segment-end" className="h-full bg-neutral-800/60 flex-1" />);
-                    }
-                    return timelineElements;
-                  })()
-                ) : (
-                  <div className="h-full w-full bg-neutral-800/60" />
-                )}
-              </div>
-
-              <div 
-                className="absolute left-0 h-1.5 bg-orange-500 rounded-full pointer-events-none transition-all duration-75" 
-                style={{ width: `${duration ? (currentTime / duration) * 100 : 0}%` }} />
-
-              <input
-                type="range" min={0} max={duration || 100} step={0.1} value={currentTime} onChange={handleScrub}
-                className="absolute w-full h-full opacity-0 cursor-pointer z-20" />
-            </div>
-
-            {/* DYNAMIC METRIC DISPATCH AND MULTI-MODE ACTION FOOTER */}
-            <div className="relative flex items-center pointer-events-auto">
-
-              {/* LEFT: Playback timers */}
-              <div className="text-xs font-mono text-neutral-400 tracking-tight shrink-0">
-                <span className="text-neutral-100 font-bold bg-neutral-900/60 px-2 py-1 rounded border border-neutral-800/40">{formatTime(currentTime)}</span>
-                <span className="mx-2 text-neutral-700">/</span>
-                <span>{formatTime(duration)}</span>
-              </div>
-
-              {/* CENTER: Action buttons — only visible in fullscreen, absolutely centered */}
-              {isFullscreen && (
-                <div className="absolute left-1/2 -translate-x-1/2 flex items-center space-x-1.5">
-                  <label className="mobile-expand-hitbox flex items-center space-x-2 px-3 py-1.5 rounded-lg hover:bg-neutral-800/40 cursor-pointer select-none group text-xs font-mono text-neutral-300">
-                    <input
-                      type="checkbox" checked={autoplay} onChange={toggleAutoplayState}
-                      className="w-3.5 h-3.5 rounded border-neutral-700 bg-neutral-950 text-orange-500 focus:ring-0 cursor-pointer accent-orange-500" />
-                    <span className="group-hover:text-white transition hidden sm:inline">Autoplay</span>
-                  </label>
-
-                  <div className="w-px h-4 bg-neutral-800" />
-
-                  <label className="mobile-expand-hitbox flex items-center space-x-2 px-3 py-1.5 rounded-lg hover:bg-neutral-800/40 cursor-pointer select-none group text-xs font-mono text-neutral-300">
-                    <input
-                      type="checkbox" checked={autoskip} onChange={toggleAutoskipState}
-                      className="w-3.5 h-3.5 rounded border-neutral-700 bg-neutral-950 text-orange-500 focus:ring-0 cursor-pointer accent-orange-500" />
-                    <span className="group-hover:text-white transition hidden sm:inline">Auto-Skip</span>
-                  </label>
-
-                  <div className="w-px h-4 bg-neutral-800" />
-
-                  <label className="mobile-expand-hitbox flex items-center space-x-2 px-3 py-1.5 rounded-lg hover:bg-neutral-800/40 cursor-pointer select-none group text-xs font-mono text-neutral-300">
-                    <input
-                      type="checkbox" checked={autonext} onChange={toggleAutonextState}
-                      className="w-3.5 h-3.5 rounded border-neutral-700 bg-neutral-950 text-orange-500 focus:ring-0 cursor-pointer accent-orange-500" />
-                    <span className="group-hover:text-white transition hidden sm:inline">Auto-Next</span>
-                  </label>
-
-                  <div className="w-px h-4 bg-neutral-800" />
-
-                  <button
-                    onClick={navigateToNextEpisode} disabled={!hasNextEpisodeElement}
-                    className="mobile-expand-hitbox px-3.5 py-1.5 rounded-lg bg-orange-500 hover:bg-orange-600 disabled:bg-neutral-950 text-white disabled:text-neutral-600 border border-orange-400/20 disabled:border-neutral-800/40 font-mono font-bold text-[10px] tracking-wider uppercase transition active:scale-95 shadow-md flex items-center gap-1"
-                  >
-                    Next Ep &rarr;
-                  </button>
-
-                  <div className="w-px h-4 bg-neutral-800" />
-
-                  <button
-                    onClick={toggleCropFill}
-                    className={`mobile-expand-hitbox px-3 py-1.5 rounded-lg font-mono font-bold text-[10px] tracking-wider uppercase transition active:scale-95 flex items-center gap-1 ${isCropFill ? "bg-orange-500 text-white" : "bg-neutral-900/60 text-neutral-300 hover:text-white"}`}
-                    title={isCropFill ? "Fit to Screen" : "Fill Screen"}
-                  >
-                    {isCropFill ? "Fill" : "Fit"}
-                  </button>
+                    })}
                 </div>
-              )}
-
-              {/* RIGHT: Fullscreen toggle — background removed, bigger icon */}
-              <button
-                onClick={toggleFullscreen}
-                className="mobile-expand-hitbox ml-auto p-2 bg-transparent hover:bg-neutral-800/20 border border-transparent hover:border-neutral-800/30 rounded-lg transition active:scale-95 flex items-center justify-center shrink-0"
-                title={isFullscreen ? "Exit Fullscreen" : "Enter Fullscreen"}
-              >
-                <img 
-                  src="/Assets/full-screen.png" 
-                  alt={isFullscreen ? "Exit Fullscreen" : "Enter Fullscreen"}
-                  style={{ width: "20px", height: "20px" }}
-                  className="object-contain invert brightness-200 contrast-200"
-                />
-              </button>
-
-            </div>
-          </div>
-        </div>
-
-        {/* DEFAULT COMPACT STANDARD FOOTER OPTIONS DECK */}
-        <div className="w-full bg-neutral-900/40 py-1.5 px-4 rounded-xl border border-neutral-900 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 shadow-md backdrop-blur-sm">
-          <div className="flex flex-wrap items-center gap-6 text-xs font-mono text-neutral-300">
-            <label className="mobile-expand-hitbox flex items-center space-x-2.5 cursor-pointer select-none group relative py-1">
-              <input
-                type="checkbox"
-                checked={autoplay}
-                onChange={toggleAutoplayState}
-                className="w-3.5 h-3.5 rounded border-neutral-800 bg-neutral-950 text-orange-500 focus:ring-0 focus:ring-offset-0 checked:bg-orange-500 cursor-pointer accent-orange-500"
-              />
-              <span className="group-hover:text-neutral-100 transition">Autoplay</span>
-            </label>
-
-            <label className="mobile-expand-hitbox flex items-center space-x-2.5 cursor-pointer select-none group relative py-1">
-              <input
-                type="checkbox"
-                checked={autoskip}
-                onChange={toggleAutoskipState}
-                className="w-3.5 h-3.5 rounded border-neutral-800 bg-neutral-950 text-orange-500 focus:ring-0 focus:ring-offset-0 checked:bg-orange-500 cursor-pointer accent-orange-500"
-              />
-              <span className="group-hover:text-neutral-100 transition">Auto-Skip</span>
-            </label>
-
-            <label className="mobile-expand-hitbox flex items-center space-x-2.5 cursor-pointer select-none group relative py-1">
-              <input
-                type="checkbox"
-                checked={autonext}
-                onChange={toggleAutonextState}
-                className="w-3.5 h-3.5 rounded border-neutral-800 bg-neutral-950 text-orange-500 focus:ring-0 focus:ring-offset-0 checked:bg-orange-500 cursor-pointer accent-orange-500"
-              />
-              <span className="group-hover:text-neutral-100 transition">Auto-Next</span>
-            </label>
-          </div>
-
-          <div className="flex items-center space-x-2 self-end sm:self-auto">
-            <button
-              onClick={navigateToPrevEpisode}
-              disabled={!hasPrevEpisode}
-              className="mobile-expand-hitbox px-3 py-1 rounded-md bg-neutral-950 border border-neutral-900 text-neutral-400 hover:text-neutral-200 disabled:opacity-20 disabled:hover:text-neutral-400 font-mono font-bold text-[10px] tracking-wider uppercase transition active:scale-95"
-            >
-              &larr; Prev
-            </button>
-            <button
-              onClick={navigateToNextEpisode}
-              disabled={!hasNextEpisodeElement}
-              className="mobile-expand-hitbox px-3 py-1 rounded-md bg-neutral-950 border border-neutral-900 text-neutral-400 hover:text-neutral-200 disabled:opacity-20 disabled:hover:text-neutral-400 font-mono font-bold text-[10px] tracking-wider uppercase transition active:scale-95"
-            >
-              Next &rarr;
-            </button>
-          </div>
-        </div>
-
-        <div className="w-full bg-neutral-900/40 border border-neutral-900 rounded-xl overflow-hidden shadow-xl backdrop-blur-sm">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 p-6 items-start">
-            <div className="flex flex-col">
-              <div className="text-white text-lg md:text-xl tracking-tight leading-tight">
-                <span className="font-black">Episode {epNum}:</span> <span className="font-medium text-neutral-200">{episodeTitle || "Broadcast Segment"}</span>
-              </div>
-              <div className="text-[11px] font-mono text-neutral-500 font-medium tracking-wide mt-4">
-                Air Date: Oct 2024
-              </div>
-            </div>
-
-            <div className="flex items-center gap-4 md:justify-end">
-              <div className="flex flex-col space-y-1 w-full sm:w-40">
-                <label className="text-[9px] font-mono font-bold tracking-wider text-neutral-500 uppercase">
-                  Audio Track
-                </label>
-                <select
-                  value={activeCategory}
-                  onChange={(e) => handleCategoryChange(e.target.value as "sub" | "dub")}
-                  className="w-full bg-neutral-950 border border-neutral-800 text-neutral-200 px-3 py-2 rounded text-xs font-mono font-bold focus:outline-none focus:border-orange-500 cursor-pointer"
-                >
-                  <option value="sub">Subtitled</option>
-                  <option value="dub" disabled={!hasDubAvailable}>
-                    Dubbed {!hasDubAvailable ? "(N/A)" : ""}
-                  </option>
-                </select>
-              </div>
-
-              <div className="flex flex-col space-y-1 w-full sm:w-44">
-                <label className="text-[9px] font-mono font-bold tracking-wider text-neutral-500 uppercase">
-                  Routing Cluster
-                </label>
-                <select
-                  value={provider}
-                  onChange={(e) => handleProviderChange(e.target.value)}
-                  className="w-full bg-neutral-950 border border-neutral-800 text-neutral-200 px-3 py-2 rounded text-xs font-mono font-bold focus:outline-none focus:border-orange-500 cursor-pointer"
-                >
-                  {availableProviders.map((pKey) => (
-                    <option key={pKey} value={pKey}>
-                      Server {pKey.toUpperCase()}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-          </div>
-
-          <div className="mx-6 border-b border-neutral-800/80" />
-
-          <div className="p-6">
-            <p className="text-xs md:text-sm text-neutral-400 leading-relaxed text-justify whitespace-pre-line">
-              {episodeDesc ? cleanDescription(episodeDesc) : "Stream successfully parsed and synchronized."}
-            </p>
-          </div>
-        </div>
-
-        <div className="space-y-6 pt-6 border-t border-neutral-900">
-          <div className="border-b border-neutral-900 pb-3 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <div className="space-y-0.5">
-              <h2 className="text-xs font-bold uppercase tracking-widest text-neutral-200">Episode Selection</h2>
-              <div className="text-[10px] font-mono text-neutral-600">{totalEpisodesCount} episodes</div>
-            </div>
-            <div className="flex items-center bg-neutral-900 border border-neutral-800 p-1 rounded space-x-1 self-start sm:self-auto">
-              {(["compact", "detailed", "cinematic"] as ViewStyle[]).map((v) => (
-                <button
-                  key={v}
-                  onClick={() => setViewStyle(v)}
-                  className={`px-3 py-1.5 rounded text-[10px] font-mono tracking-tight transition capitalize ${
-                    viewStyle === v ? "bg-orange-500 text-white font-bold shadow" : "text-neutral-400 hover:text-neutral-200"
-                  }`}
-                >
-                  {v}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="flex flex-col lg:flex-row gap-8 items-start">
-            {chunkRanges.length > 0 && (
-              <div className="w-full lg:w-48 shrink-0 flex lg:flex-col flex-wrap gap-1 bg-neutral-900/30 border border-neutral-900 p-2 rounded">
-                <div className="text-[9px] font-mono tracking-wider text-neutral-600 uppercase p-2 hidden lg:block border-b border-neutral-900 mb-1">
-                  Indices Filter
-                </div>
-                {chunkRanges.map((range, index) => (
-                  <button
-                    key={range.label}
-                    onClick={() => setActiveRangeIndex(index)}
-                    className={`flex-1 lg:flex-initial text-left px-3 py-2 rounded text-[11px] font-mono transition-all border ${
-                      index === activeRangeIndex
-                        ? "bg-orange-500/10 border-orange-500/30 text-orange-500 font-bold"
-                        : "bg-transparent border-transparent text-neutral-500 hover:text-neutral-300 hover:bg-neutral-900/50"
-                    }`}
-                  >
-                    Episodes {range.label}
-                  </button>
-                ))}
               </div>
             )}
-
-            <div className="flex-1 w-full">
-              {currentDisplayedEpisodes.length > 0 ? (
-                <div className={
-                  viewStyle === "compact"
-                    ? "grid grid-cols-3 sm:grid-cols-6 md:grid-cols-8 xl:grid-cols-10 gap-2"
-                    : viewStyle === "detailed"
-                    ? "grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3"
-                    : "grid grid-cols-1 gap-4"
-                }>
-                  {currentDisplayedEpisodes.map((ep) => {
-                    const epSlug = ep.id.includes("/") ? ep.id.split("/").pop() : ep.id;
-                    const isActive = Number(ep.number) === parseFloat(epNum);
-                    const href = `/watch?provider=${provider}&anilistId=${anilistId}&category=${activeCategory}&slug=${encodeURIComponent(epSlug || "")}&epNum=${ep.number}`;
-
-                    if (viewStyle === "compact") {
-                      return (
-                        <Link key={ep.id} href={href} className={`border py-3.5 rounded text-center transition block ${
-                          isActive ? "bg-orange-500/20 border-orange-500/60 text-orange-500 font-extrabold shadow" : "bg-neutral-900/50 border-neutral-900 hover:border-neutral-700 text-neutral-300 hover:text-orange-500"
-                        }`}>
-                          <span className="text-xs">{ep.number}</span>
-                        </Link>
-                      );
-                    }
-
-                    if (viewStyle === "detailed") {
-                      return (
-                        <Link key={ep.id} href={href} className={`border p-4 rounded transition block text-left space-y-1 ${
-                          isActive ? "bg-orange-500/10 border-orange-500/40" : "bg-neutral-900/50 border-neutral-900 hover:border-neutral-700"
-                        }`}>
-                          <div className={`font-bold text-xs truncate ${isActive ? "text-orange-500" : "text-neutral-200 hover:text-orange-500"}`}>
-                            Episode {ep.number}{ep.title ? ` — ${ep.title}` : ""}
-                          </div>
-                          <p className="text-[10px] text-neutral-500 line-clamp-1 leading-normal">
-                            {ep.description ? cleanDescription(ep.description) : "No description available."}
-                          </p>
-                        </Link>
-                      );
-                    }
-
-                    return (
-                      <Link key={ep.id} href={href} className={`border rounded overflow-hidden transition flex h-28 md:h-32 group text-left ${
-                        isActive ? "bg-orange-500/10 border-orange-500/40" : "bg-neutral-900/40 border-neutral-900 hover:border-neutral-800"
-                      }`}>
-                        <div className="w-1/3 h-full shrink-0 relative bg-neutral-900 border-r border-neutral-900 overflow-hidden">
-                          <img
-                            src={ep.image || "https://placehold.co/300x180?text=Episode"}
-                            alt={`Episode ${ep.number}`}
-                            className="w-full h-full object-cover transition duration-500 group-hover:scale-105"
-                          />
-                          <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent" />
-                          <div className="absolute bottom-2 left-3 bg-orange-500 text-white font-mono font-black text-[10px] px-1.5 py-0.5 rounded shadow-lg">
-                            EP {ep.number}
-                          </div>
-                        </div>
-                        <div className="p-4 flex-1 min-w-0 flex flex-col justify-center space-y-1.5">
-                          <h3 className={`font-bold text-xs md:text-sm truncate leading-tight ${isActive ? "text-orange-500" : "text-neutral-200 group-hover:text-orange-500"}`}>
-                            {ep.title || `Episode ${ep.number}`}
-                          </h3>
-                          <p className="text-[11px] text-neutral-400 line-clamp-2 md:line-clamp-3 leading-relaxed">
-                            {ep.description ? cleanDescription(ep.description) : "No description available."}
-                          </p>
-                        </div>
-                      </Link>
-                    );
-                  })}
-                </div>
-              ) : (
-                <div className="bg-neutral-900/10 border border-neutral-900/60 rounded-lg p-12 text-center max-w-sm mx-auto">
-                  <p className="text-neutral-500 font-semibold text-xs">No episodes found</p>
-                </div>
-              )}
-            </div>
           </div>
-        </div>
 
+          {/* SIDEBAR */}
+          <Sidebar
+            isExternalMovie={isExternalMovie}
+            sidebarTab={sidebarTab}
+            setSidebarTab={setSidebarTab}
+            tmdbSeasons={tmdbSeasons}
+            selectedTmdbSeason={selectedTmdbSeason}
+            setSelectedTmdbSeason={setSelectedTmdbSeason}
+            seasonListRef={seasonListRef}
+            episodeListRef={episodeListRef}
+            currentDisplayedEpisodes={currentDisplayedEpisodes}
+            epNum={epNum}
+            provider={provider}
+            anilistId={anilistId}
+            activeCategory={activeCategory}
+            mediaType={mediaType}
+            episodeSnapshot={episodeSnapshot}
+            duration={duration}
+            progressMap={progressMap}
+            activeTmdbSeasonInfo={activeTmdbSeasonInfo}
+            CONTINUE_WATCHING_THRESHOLD={CONTINUE_WATCHING_THRESHOLD}
+            formatTime={formatTime}
+            tmdbSeasonLoading={tmdbSeasonLoading}
+            totalEpisodesCount={totalEpisodesCount}
+          />
+        </div>
       </div>
+
+      {/* MOBILE BOTTOM NAVIGATION */}
+      <nav className="lg:hidden fixed inset-x-0 bottom-0 z-40 flex items-center justify-around bg-neutral-950 border-t border-neutral-900 pt-2 pb-[calc(0.5rem+env(safe-area-inset-bottom))] px-2">
+        {[
+          {
+            key: "watch",
+            label: "Watch",
+            href: undefined,
+            icon: (active: boolean) => (
+              <svg width="20" height="20" viewBox="0 0 24 24" fill={active ? "currentColor" : "none"} stroke="currentColor" strokeWidth="2">
+                <path d="M8 5v14l11-7z" strokeLinejoin="round" />
+              </svg>
+            ),
+          },
+          {
+            key: "explore",
+            label: "Explore",
+            href: "/",
+            icon: () => (
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <circle cx="12" cy="12" r="9" />
+                <path d="M15 9l-2 6-4 2 2-6 4-2z" strokeLinejoin="round" />
+              </svg>
+            ),
+          },
+          {
+            key: "bookmarks",
+            label: "Bookmarks",
+            href: "/bookmarks",
+            icon: () => (
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M6 4h12v16l-6-4-6 4V4z" strokeLinejoin="round" />
+              </svg>
+            ),
+          },
+          {
+            key: "downloads",
+            label: "Downloads",
+            href: "/downloads",
+            icon: () => (
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M12 3v12m0 0l-4-4m4 4l4-4M4 19h16" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            ),
+          },
+          {
+            key: "profile",
+            label: "Profile",
+            href: "/settings",
+            icon: () => (
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <circle cx="12" cy="8" r="4" />
+                <path d="M4 20c0-4 3.6-6 8-6s8 2 8 6" strokeLinecap="round" />
+              </svg>
+            ),
+          },
+        ].map((item) => {
+          const active = item.key === "watch";
+          const content = (
+            <>
+              <span className={active ? "text-orange-500" : "text-neutral-500"}>{item.icon(active)}</span>
+              <span className={`text-[10px] font-medium ${active ? "text-orange-500" : "text-neutral-500"}`}>
+                {item.label}
+              </span>
+            </>
+          );
+          const className = "mobile-expand-hitbox flex flex-col items-center gap-1 px-3 py-1.5 rounded-lg transition-colors active:scale-95";
+          return item.href ? (
+            <Link key={item.key} href={item.href} className={className}>
+              {content}
+            </Link>
+          ) : (
+            <button
+              key={item.key}
+              type="button"
+              className={className}
+              onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
+            >
+              {content}
+            </button>
+          );
+        })}
+      </nav>
+
+      <style jsx global>{`
+        * {
+          -webkit-tap-highlight-color: transparent;
+          -webkit-touch-callout: none;
+          -webkit-user-select: none;
+          -moz-user-select: none;
+          user-select: none;
+        }
+        a,
+        button {
+          touch-action: manipulation;
+        }
+        input[type="range"] {
+          touch-action: none;
+        }
+        .volume-vertical-input {
+          -webkit-appearance: none;
+          appearance: none;
+          background: transparent;
+          cursor: pointer;
+          margin: 0;
+        }
+        .volume-vertical-input::-webkit-slider-runnable-track {
+          background: transparent;
+        }
+        .volume-vertical-input::-webkit-slider-thumb {
+          -webkit-appearance: none;
+          width: 22px;
+          height: 22px;
+          background: transparent;
+        }
+        .volume-vertical-input::-moz-range-track {
+          background: transparent;
+          border: none;
+        }
+        .volume-vertical-input::-moz-range-thumb {
+          width: 22px;
+          height: 22px;
+          background: transparent;
+          border: none;
+        }
+        img,
+        video {
+          -webkit-user-drag: none;
+          user-drag: none;
+        }
+        html,
+        body {
+          -webkit-overflow-scrolling: touch;
+        }
+        .overflow-y-auto,
+        .overflow-x-auto {
+          -webkit-overflow-scrolling: touch;
+          overscroll-behavior: contain;
+        }
+      `}</style>
     </main>
   );
 }
 
 export default function WatchPage() {
   return (
-    <Suspense fallback={
-      <div className="flex h-screen w-screen items-center justify-center bg-black text-white">
-        Loading Player...
-      </div>
-    }>
+    <Suspense
+      fallback={
+        <div className="flex h-screen w-screen items-center justify-center bg-black text-white font-mono text-sm">
+          Loading Player...
+        </div>
+      }
+    >
       <WatchContent />
     </Suspense>
   );
