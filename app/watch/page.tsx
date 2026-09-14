@@ -5,11 +5,8 @@ import { Suspense } from 'react';
 import { useSearchParams, useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
 import { supabase, SupabaseProfile } from "../utils/supabase";
-import { saveOfflineDownload, makeDownloadId, isEpisodeDownloaded } from "../utils/offlineStore";
-import { getApiBaseUrl, getTmdbEmbedApiUrl } from "../utils/api";
 
-const BACKEND_API = getApiBaseUrl();
-const TMDB_EMBED_API = getTmdbEmbedApiUrl();
+const BACKEND_API = process.env.NEXT_PUBLIC_API_URL ?? "https://anime-api-one-cyan.vercel.app/api";
 
 const STABILITY_PRIORITY = ["bee", "kiwi", "pewe", "bonk"];
 const SKIP_COUNTDOWN_DURATION = 7000; // 7 seconds timeout for Netflix-style skip button
@@ -25,94 +22,6 @@ interface EpisodeNode {
 
 type ViewStyle = "compact" | "detailed" | "cinematic";
 
-type SkipIntervalItem = {
-  skipId: string;
-  skipType: "op" | "ed";
-  interval: { startTime: number; endTime: number };
-  source?: string;
-  confidence?: number;
-  episodeLength?: number;
-};
-
-// Animated switch — replaces the old checkbox inputs. 180ms transition on
-// both the track color and the thumb position keeps it feeling snappy
-// without being distracting mid-playback.
-function ToggleSwitch({
-  checked,
-  onChange,
-  label,
-  compact = false,
-}: {
-  checked: boolean;
-  onChange: () => void;
-  label: string;
-  compact?: boolean;
-}) {
-  return (
-    <label
-      className={`mobile-expand-hitbox flex items-center gap-2 cursor-pointer select-none group ${
-        compact ? "px-3 py-1.5 rounded-lg hover:bg-neutral-800/40 transition" : "py-1"
-      }`}
-    >
-      <button
-        type="button"
-        role="switch"
-        aria-checked={checked}
-        aria-label={label}
-        onClick={onChange}
-        className={`relative w-8 h-[18px] rounded-full shrink-0 transition-colors duration-180 focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-500/60 ${
-          checked ? "bg-orange-500" : "bg-neutral-700"
-        }`}
-      >
-        <span
-          className={`absolute top-0.5 left-0.5 w-[14px] h-[14px] bg-white rounded-full shadow transition-transform duration-180 ${
-            checked ? "translate-x-[14px]" : "translate-x-0"
-          }`}
-        />
-      </button>
-      <span className="text-xs font-mono text-neutral-300 group-hover:text-white transition-colors duration-180 hidden sm:inline">
-        {label}
-      </span>
-    </label>
-  );
-}
-
-// Caches the RESOLVED stream source (URL/referer/provider/subtitles) per
-// episode for a short window — this is what makes "go back to home, click
-// back into the same show" feel instant: it skips the whole
-// provider-fallback resolution loop and jumps straight to loading the
-// stream. Capped at a few minutes because these URLs are often
-// short-lived/signed by the provider, so caching them for too long would
-// serve a dead link instead of actually being faster.
-const SOURCE_CACHE_KEY = "streamanime_source_cache";
-const SOURCE_CACHE_TTL_MS = 8 * 60 * 1000; // 8 minutes
-
-function loadSourceCache(): Record<string, any> {
-  try {
-    return JSON.parse(sessionStorage.getItem(SOURCE_CACHE_KEY) || "{}");
-  } catch {
-    return {};
-  }
-}
-
-function saveSourceCache(cache: Record<string, any>) {
-  try {
-    // Cap size — this is a short-lived convenience cache, not meant to
-    // grow unbounded across a long browsing session.
-    const keys = Object.keys(cache);
-    if (keys.length > 30) {
-      keys
-        .sort((a, b) => (cache[a].cachedAt || 0) - (cache[b].cachedAt || 0))
-        .slice(0, keys.length - 30)
-        .forEach((k) => delete cache[k]);
-    }
-    sessionStorage.setItem(SOURCE_CACHE_KEY, JSON.stringify(cache));
-  } catch {
-    // sessionStorage full/unavailable — non-fatal, just means this visit
-    // won't get the instant-resume speedup.
-  }
-}
-
 function extractEpisodeLists(epData: any, provider: string) {
   const block =
     epData?.results?.providers?.[provider] ??
@@ -127,74 +36,6 @@ function extractEpisodeLists(epData: any, provider: string) {
     subList: (root.sub ?? root.SUB ?? []) as EpisodeNode[],
     dubList: (root.dub ?? root.DUB ?? []) as EpisodeNode[],
   };
-}
-
-function normalizeSkipIntervals(rawItems: any[], episodeLength: number, source: string): SkipIntervalItem[] {
-  const deduped = new Map<string, SkipIntervalItem>();
-
-  for (const raw of rawItems || []) {
-    const normalizedType = String(
-      raw?.skipType ?? raw?.type ?? raw?.skip_type ?? raw?.category ?? raw?.kind ?? ""
-    ).toLowerCase();
-
-    const skipType: "op" | "ed" | null = normalizedType.includes("ed")
-      ? "ed"
-      : normalizedType.includes("op")
-        ? "op"
-        : null;
-
-    const startTime = Number(
-      raw?.interval?.startTime ?? raw?.interval?.start ?? raw?.startTime ?? raw?.start ?? raw?.start_time ?? raw?.from ?? raw?.fromTime
-    );
-    const endTime = Number(
-      raw?.interval?.endTime ?? raw?.interval?.end ?? raw?.endTime ?? raw?.end ?? raw?.end_time ?? raw?.to ?? raw?.toTime
-    );
-
-    if (!skipType || !Number.isFinite(startTime) || !Number.isFinite(endTime)) continue;
-    if (endTime <= startTime || startTime < 0 || endTime > Math.max(episodeLength + 30, 1)) continue;
-
-    const item = {
-      skipId: `${source}-${skipType}-${Math.round(startTime)}-${Math.round(endTime)}`,
-      skipType,
-      interval: { startTime, endTime },
-      source,
-      confidence: Number(raw?.confidence ?? raw?.confidenceScore ?? 0.8) || 0.8,
-      episodeLength,
-    };
-
-    deduped.set(item.skipId, item);
-  }
-
-  return Array.from(deduped.values()).sort((a, b) => a.interval.startTime - b.interval.startTime);
-}
-
-function buildConventionalFallbackIntervals(episodeLength: number, episodeNumber: number): SkipIntervalItem[] {
-  const isFirstEpisode = Math.floor(episodeNumber) === 1;
-  const fallbackSet: SkipIntervalItem[] = [];
-
-  if (!isFirstEpisode && episodeLength > 300) {
-    fallbackSet.push({
-      skipId: "fallback-op",
-      skipType: "op",
-      interval: { startTime: 90, endTime: 180 },
-      source: "fallback",
-      confidence: 0.65,
-      episodeLength,
-    });
-  }
-
-  if (episodeLength > 240) {
-    fallbackSet.push({
-      skipId: "fallback-ed",
-      skipType: "ed",
-      interval: { startTime: episodeLength - 120, endTime: episodeLength - 30 },
-      source: "fallback",
-      confidence: 0.65,
-      episodeLength,
-    });
-  }
-
-  return fallbackSet;
 }
 
 function WatchContent() {
@@ -227,8 +68,6 @@ function WatchContent() {
   const [activeRangeIndex, setActiveRangeIndex] = useState<number>(0);
 
   const [isPlaying,       setIsPlaying]       = useState(false);
-  const [bufferedPercent, setBufferedPercent] = useState(0);
-  const [seekFlash,       setSeekFlash]       = useState<{ side: "left" | "right"; key: number } | null>(null);
   const [currentTime,     setCurrentTime]     = useState(0);
   const [duration,        setDuration]        = useState(0);
   const [volume,          setVolume]          = useState(1);
@@ -236,11 +75,7 @@ function WatchContent() {
   const [isFullscreen,    setIsFullscreen]    = useState(false);
   const [showControls,    setShowControls]    = useState(true);
   const [captionsEnabled, setCaptionsEnabled] = useState(true);
-  const [subtitleTracks, setSubtitleTracks] = useState<Array<{ url: string; label: string; language: string; isDefault?: boolean }>>([]);
   const [currentCaption,  setCurrentCaption]  = useState<string>("");
-
-  // Extracted movie/TV stream URL (native playback, no iframe)
-  const [externalStreamUrl, setExternalStreamUrl] = useState<string | null>(null);
 
   const [animeTitle,      setAnimeTitle]      = useState<string>("Anime Series");
   const [episodeTitle,    setEpisodeTitle]    = useState<string>("Currently Loading...");
@@ -264,34 +99,15 @@ function WatchContent() {
   // Fullscreen crop-to-fill state (removes letterbox black bars by cropping sides)
   const [isCropFill, setIsCropFill] = useState(false);
 
-  // URL Parameters Configuration
   const urlProvider = searchParams.get("provider");
-  const mediaType   = searchParams.get("type") ?? searchParams.get("mediaType") ?? "anime";
-  const anilistId   = searchParams.get("id") ?? searchParams.get("anilistId") ?? searchParams.get("tmdbId") ?? "0";
+  const anilistId   = searchParams.get("anilistId") ?? "0";
   const category    = searchParams.get("category");
   const rawSlug     = searchParams.get("slug")       ?? "";
   const epNum       = searchParams.get("epNum")      ?? "1";
-  const seasonNum   = searchParams.get("season")     ?? "1";
 
   const currentSlug = rawSlug
     ? (rawSlug.includes("watch/") ? rawSlug.split("/").pop() ?? rawSlug : rawSlug)
     : "";
-
-  // External (movie/TV) content identification
-  const isExternalMedia = 
-    mediaType === "movie" || 
-    mediaType === "series" || 
-    mediaType === "tv" || 
-    urlProvider === "tmdb" || 
-    urlProvider === "omdb" || 
-    /^tmdb-(?:movie|tv)-/i.test(anilistId) ||
-    /^tt\d+/i.test(anilistId);
-
-  // Movie vs. TV episode distinction
-  const isExternalMovie = 
-    mediaType === "movie" ||
-    /^tmdb-movie-/i.test(anilistId) ||
-    (isExternalMedia && !/^tt/i.test(currentSlug) && mediaType !== "series" && mediaType !== "tv" && !/^tmdb-tv-/i.test(anilistId));
 
   // Load Active Session Profile
   const loadActiveProfileData = useCallback(async () => {
@@ -446,76 +262,6 @@ function WatchContent() {
     router.push(`${pathname}?${p.toString()}`);
   }, [episodes, epNum, searchParams, pathname, router]);
 
-  const [downloadProgress, setDownloadProgress] = useState<number | null>(null);
-  const [downloadedFlag, setDownloadedFlag] = useState(false);
-
-  useEffect(() => {
-    const activeId = localStorage.getItem("streamanime_active_profile_id");
-    if (!activeId || !anilistId) return;
-    isEpisodeDownloaded(activeId, anilistId, epNum).then(setDownloadedFlag);
-  }, [anilistId, epNum]);
-
-  const handleDownload = async () => {
-    if (!provider || !anilistId || !currentSlug || downloadProgress !== null) return;
-
-    const activeId = localStorage.getItem("streamanime_active_profile_id");
-    if (!activeId) {
-      alert("You need an active profile to save downloads.");
-      return;
-    }
-
-    setDownloadProgress(0);
-    try {
-      const url = `${BACKEND_API}/download?provider=${provider}&anilistId=${anilistId}&category=${activeCategory}&slug=${encodeURIComponent(currentSlug)}`;
-      const res = await fetch(url);
-      if (!res.ok || !res.body) throw new Error(`Download failed (${res.status})`);
-
-      const contentLength = Number(res.headers.get("content-length")) || 0;
-      const reader = res.body.getReader();
-      const chunks: Uint8Array[] = [];
-      let received = 0;
-
-      setDownloadProgress(contentLength ? 0 : -1);
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        if (value) {
-          chunks.push(value);
-          received += value.length;
-          if (contentLength) setDownloadProgress(Math.min(99, Math.round((received / contentLength) * 100)));
-        }
-      }
-
-      const blob = new Blob(chunks as BlobPart[], { type: "video/mp4" });
-
-      if (blob.size === 0) {
-        throw new Error("Received an empty file from the server.");
-      }
-
-      await saveOfflineDownload({
-        id: makeDownloadId(activeId, anilistId, epNum),
-        profileId: activeId,
-        anilistId: String(anilistId),
-        animeTitle,
-        episodeNumber: String(epNum),
-        episodeImage: episodeSnapshot || "",
-        category: activeCategory,
-        blob,
-        sizeBytes: blob.size,
-        downloadedAt: Date.now(),
-      });
-
-      setDownloadProgress(100);
-      setDownloadedFlag(true);
-      window.setTimeout(() => setDownloadProgress(null), 1200);
-    } catch (err) {
-      console.error("Offline download failed:", err);
-      alert("Download failed. Try again in a moment.");
-      setDownloadProgress(null);
-    }
-  };
-
   const togglePlay = () => {
     if (!videoRef.current) return;
     isPlaying ? videoRef.current.pause() : videoRef.current.play().catch(() => {});
@@ -528,16 +274,6 @@ function WatchContent() {
       if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
     }
   };
-
-  const applyCaptionMode = useCallback((enabled: boolean) => {
-    setCaptionsEnabled(enabled);
-    if (!videoRef.current) return;
-
-    const tracks = videoRef.current.textTracks;
-    for (let i = 0; i < tracks.length; i += 1) {
-      tracks[i].mode = enabled ? "showing" : "hidden";
-    }
-  }, []);
 
   const skipSeconds = (amount: number) => {
     if (!videoRef.current) return;
@@ -590,64 +326,6 @@ function WatchContent() {
     };
   }, []);
 
-  // Keyboard shortcuts — ignored while typing in an input/textarea so they
-  // don't hijack search boxes or text fields elsewhere on the page.
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      const target = e.target as HTMLElement;
-      const isTyping = target?.tagName === "INPUT" || target?.tagName === "TEXTAREA" || target?.isContentEditable;
-      if (isTyping) return;
-
-      switch (e.key.toLowerCase()) {
-        case " ":
-        case "k":
-          e.preventDefault();
-          togglePlay();
-          break;
-        case "arrowright":
-          e.preventDefault();
-          skipSeconds(10);
-          break;
-        case "arrowleft":
-          e.preventDefault();
-          skipSeconds(-10);
-          break;
-        case "arrowup":
-          e.preventDefault();
-          if (videoRef.current) {
-            const next = Math.min(1, (isMuted ? 0 : volume) + 0.1);
-            videoRef.current.volume = next;
-            videoRef.current.muted = false;
-            setVolume(next);
-            setIsMuted(false);
-          }
-          break;
-        case "arrowdown":
-          e.preventDefault();
-          if (videoRef.current) {
-            const next = Math.max(0, (isMuted ? 0 : volume) - 0.1);
-            videoRef.current.volume = next;
-            setVolume(next);
-            setIsMuted(next === 0);
-            videoRef.current.muted = next === 0;
-          }
-          break;
-        case "m":
-          e.preventDefault();
-          toggleMute();
-          break;
-        case "f":
-          e.preventDefault();
-          toggleFullscreen();
-          break;
-      }
-    };
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isMuted, volume]);
-
   // Lock body scroll when in custom CSS fullscreen; restore + jump to top on exit
   useEffect(() => {
     if (isFullscreen) {
@@ -662,9 +340,6 @@ function WatchContent() {
   }, [isFullscreen]);
 
   const handleCategoryChange = (target: "sub" | "dub") => {
-    // The TMDB provider API currently exposes one primary audio track. Do
-    // not send movie/TV titles through the anime sub/dub resolver.
-    if (isExternalMedia) return;
     if (target === activeCategory) return;
     localStorage.setItem("streamanime_pref_lang", target);
     const targetedSlug = target === "dub" ? dubSlug : subSlug;
@@ -719,25 +394,23 @@ function WatchContent() {
   };
 
   const handleSignOutAction = () => {
-    const activeId = localStorage.getItem("streamanime_active_profile_id");
-    if (activeId) localStorage.removeItem(`streamanime_watch_history_${activeId}`);
-    localStorage.removeItem("streamanime_watch_history"); // legacy/global key cleanup
     localStorage.removeItem("streamanime_active_profile_id");
+    localStorage.removeItem("streamanime_watch_history");
     window.location.reload();
   };
 
   const commitPlaybackSessionToStorageLog = useCallback(async (current: number, total: number) => {
     if (!anilistId || anilistId === "0" || !total || total <= 0) return;
     try {
-      const activeId = localStorage.getItem("streamanime_active_profile_id");
-      const storageKey = activeId
-        ? `streamanime_watch_history_${activeId}`
-        : "streamanime_watch_history";
-
+      const storageKey = "streamanime_watch_history";
       const raw = localStorage.getItem(storageKey);
       let list: any[] = raw ? JSON.parse(raw) : [];
-
-      list = list.filter((item: any) => String(item.anilistId) !== String(anilistId));
+      
+      list = list.filter(
+        (item: any) =>
+          !(String(item.anilistId) === String(anilistId) &&
+            String(item.episodeNumber) === String(epNum))
+      );
 
       const trackingPayload = {
         anilistId: String(anilistId),
@@ -758,24 +431,12 @@ function WatchContent() {
       
       localStorage.setItem(storageKey, JSON.stringify(optimizedHistorySlice));
 
+      const activeId = localStorage.getItem("streamanime_active_profile_id");
       if (activeId) {
         await supabase
           .from("profiles")
           .update({ recent_episodes: optimizedHistorySlice })
           .eq("id", activeId);
-
-        fetch(`${BACKEND_API}/watch-stats`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            profileId: activeId,
-            anilistId,
-            title: animeTitle,
-            category: activeCategory,
-            episodeNumber: epNum,
-            progressPercent: Math.min((current / total) * 100, 100),
-          }),
-        }).catch(() => {});
       }
     } catch (e) {
       console.error("Cloud watch sync workflow failed:", e);
@@ -874,63 +535,63 @@ function WatchContent() {
   const fetchTimestampsFromAniSkip = useCallback(async (targetDuration: number) => {
     const id = parseInt(anilistId, 10);
     const epFloat = parseFloat(epNum);
+    
     const exactSeconds = Math.floor(targetDuration);
-
-    if (!id || isNaN(id) || isNaN(exactSeconds) || exactSeconds <= 60) return;
-
-    if (typeof window !== "undefined") {
-      const cacheKey = `skip-cache:${id}:${Math.floor(epFloat)}:${exactSeconds}`;
-      const cachedPayload = window.localStorage.getItem("streamanime_skip_cache_v2");
-      if (cachedPayload) {
-        try {
-          const parsedCache = JSON.parse(cachedPayload);
-          const cachedIntervals = parsedCache?.[cacheKey];
-          if (Array.isArray(cachedIntervals) && cachedIntervals.length > 0) {
-            setSkipIntervals(cachedIntervals);
-            return;
-          }
-        } catch {}
-      }
+    if (!id || isNaN(id) || isNaN(exactSeconds) || exactSeconds <= 60) {
+      return;
     }
 
-    const applyFallbackIntervals = (intervals: SkipIntervalItem[] | null = null) => {
-      const resolved = intervals && intervals.length > 0
-        ? intervals
-        : buildConventionalFallbackIntervals(exactSeconds, epFloat);
-      setSkipIntervals(resolved);
+    const applyConventionalFallbackIntervals = () => {
+      const isFirstEpisode = Math.floor(epFloat) === 1;
+      const fallbackSet: any[] = [];
 
-      if (typeof window !== "undefined") {
-        const cacheKey = `skip-cache:${id}:${Math.floor(epFloat)}:${exactSeconds}`;
-        const cachedPayload = window.localStorage.getItem("streamanime_skip_cache_v2");
-        const nextCache = cachedPayload ? JSON.parse(cachedPayload) : {};
-        nextCache[cacheKey] = resolved;
-        window.localStorage.setItem("streamanime_skip_cache_v2", JSON.stringify(nextCache));
+      if (!isFirstEpisode && exactSeconds > 300) {
+        fallbackSet.push({
+          skipType: "op",
+          interval: {
+            startTime: 90,
+            endTime: 180,
+          },
+          skipId: "fallback-op",
+          episodeLength: exactSeconds
+        });
       }
+
+      if (exactSeconds > 240) {
+        fallbackSet.push({
+          skipType: "ed",
+          interval: {
+            startTime: exactSeconds - 120,
+            endTime: exactSeconds - 30,
+          },
+          skipId: "fallback-ed",
+          episodeLength: exactSeconds
+        });
+      }
+
+      setSkipIntervals(fallbackSet);
     };
 
     try {
       const infoRes = await fetch(`${BACKEND_API}/info/${id}`);
-      let malId: number | null = null;
-      if (infoRes.ok) {
-        const infoData = await infoRes.json();
-        malId = parseInt(
-          String(
-            infoData?.results?.malId ??
-            infoData?.results?.idMal ??
-            infoData?.malId ??
-            infoData?.idMal ??
-            infoData?.results?.mal_id ??
-            infoData?.mal_id ??
-            ""
-          ),
-          10
-        );
-      }
+      if (!infoRes.ok) { applyConventionalFallbackIntervals(); return; }
+      const infoData = await infoRes.json();
 
-      let targetedMalId = Number.isFinite(malId) ? malId! : 0;
+      let malId =
+        infoData?.results?.malId  ??
+        infoData?.results?.idMal  ??
+        infoData?.malId           ??
+        infoData?.idMal           ??
+        infoData?.results?.mal_id ??
+        infoData?.mal_id;
+
+      if (!malId) { applyConventionalFallbackIntervals(); return; }
+
+      const numericMalId = parseInt(String(malId), 10);
+      let targetedMalId = numericMalId;
       let targetedEpisode = Math.floor(epFloat);
 
-      if (targetedMalId === 21) {
+      if (numericMalId === 21) {
         if (targetedEpisode <= 206) {
           targetedMalId = 21;
         } else if (targetedEpisode <= 516) {
@@ -948,59 +609,57 @@ function WatchContent() {
         }
       }
 
-      const candidateSources = [
-        {
-          name: "AniSkip",
-          url: `https://api.aniskip.com/v2/skip-times/${targetedMalId}/${targetedEpisode}?types=op&types=ed&episodeLength=${exactSeconds}`,
-          parser: (data: any) => {
-            const rawResults = data?.results ?? data?.skipTimes ?? data?.skip_times ?? [];
-            return normalizeSkipIntervals(Array.isArray(rawResults) ? rawResults : [], exactSeconds, "aniskip");
-          },
-        },
-        {
-          name: "IntroDB",
-          url: `https://introdb.com/api/v2?anilistId=${id}&episode=${targetedEpisode}&episodeLength=${exactSeconds}`,
-          parser: (data: any) => {
-            const rawResults = data?.results ?? data?.episodes ?? data?.skipTimes ?? data?.skip_times ?? [];
-            return normalizeSkipIntervals(Array.isArray(rawResults) ? rawResults : [], exactSeconds, "introdb");
-          },
-        },
-      ];
+      const skipUrl = `https://api.aniskip.com/v2/skip-times/${targetedMalId}/${targetedEpisode}?types=op&types=ed&episodeLength=${exactSeconds}`;
+      const skipRes = await fetch(skipUrl);
+      
+      if (skipRes.status === 404) {
+        applyConventionalFallbackIntervals();
+        return;
+      }
 
-      let collected: SkipIntervalItem[] = [];
-      for (const source of candidateSources) {
-        try {
-          const res = await fetch(source.url, { cache: "no-store" });
-          if (!res.ok) continue;
-          const data = await res.json();
-          const parsed = source.parser(data);
-          if (parsed.length > 0) {
-            collected = [...collected, ...parsed];
-          }
-        } catch {
-          // Ignore provider outage and continue to the next source.
+      if (skipRes.ok) {
+        const skipData = await skipRes.json();
+        if (skipData.found && Array.isArray(skipData.results)) {
+          setSkipIntervals(skipData.results);
+        } else {
+          applyConventionalFallbackIntervals();
         }
-      }
-
-      const deduped = Array.from(
-        new Map(
-          collected.map((item) => [`${item.skipType}:${item.interval.startTime}:${item.interval.endTime}`, item])
-        ).values()
-      ).sort((a, b) => a.interval.startTime - b.interval.startTime);
-
-      if (deduped.length > 0) {
-        applyFallbackIntervals(deduped);
       } else {
-        applyFallbackIntervals();
+        applyConventionalFallbackIntervals();
       }
-    } catch {
-      applyFallbackIntervals();
+    } catch (skipErr) {
+      applyConventionalFallbackIntervals();
     }
   }, [anilistId, epNum]);
 
+// ⚡ FIX: BACKGROUND APP FOCUS RESUME (Recovers player state from home screen freeze)
   useEffect(() => {
-    if (isExternalMedia) return;
+    const handleVisibilityRecovery = () => {
+      if (document.visibilityState === "visible" && videoRef.current && hlsRef.current) {
+        const frozenPosition = videoRef.current.currentTime;
+        console.log("📱 Recovering video timeline from background sleep at:", frozenPosition);
+        
+        const activeSourceUrl = hlsRef.current.url;
+        if (activeSourceUrl) {
+          hlsRef.current.detachMedia();
+          hlsRef.current.loadSource(activeSourceUrl);
+          hlsRef.current.attachMedia(videoRef.current);
+          
+          hlsRef.current.once("hlsMediaAttached" as any, () => {
+            if (videoRef.current) {
+              videoRef.current.currentTime = frozenPosition;
+              videoRef.current.play().catch(() => {});
+            }
+          });
+        }
+      }
+    };
 
+    document.addEventListener("visibilitychange", handleVisibilityRecovery);
+    return () => document.removeEventListener("visibilitychange", handleVisibilityRecovery);
+  }, []);
+
+  useEffect(() => {
     const id = parseInt(anilistId, 10);
     const epFloat = parseFloat(epNum);
     if (!id || isNaN(id)) return;
@@ -1017,14 +676,39 @@ function WatchContent() {
         lastSkipTypeRef.current = null;
         isNavigatingRef.current = false;
 
-        let epData: any;
+        let epData: any = null;
+        const storageCacheKey = `miruro_episodes_vault_${id}`;
+
         if (episodesCacheRef.current?.id === anilistId) {
           epData = episodesCacheRef.current.data;
         } else {
-          const res = await fetch(`${BACKEND_API}/episodes/${id}`);
-          if (res.ok) {
-            epData = await res.json();
-            episodesCacheRef.current = { id: anilistId, data: epData };
+          // Check physical local device storage cache first!
+          const offlineDataStr = typeof window !== "undefined" ? localStorage.getItem(storageCacheKey) : null;
+          if (offlineDataStr) {
+            try {
+              const parsedCache = JSON.parse(offlineDataStr);
+              // Keeps the data offline without an API network ping if it's less than 4 hours old
+              if (parsedCache.timestamp && Date.now() - parsedCache.timestamp < 4 * 60 * 60 * 1000) {
+                epData = parsedCache.data;
+                episodesCacheRef.current = { id: anilistId, data: epData };
+              }
+            } catch {
+              epData = null;
+            }
+          }
+
+          // If no cache exists, make a normal network request
+          if (!epData) {
+            const res = await fetch(`${BACKEND_API}/episodes/${id}`);
+            if (res.ok) {
+              epData = await res.json();
+              episodesCacheRef.current = { id: anilistId, data: epData };
+              
+              // Write a background copy for instant future loads
+              if (typeof window !== "undefined") {
+                localStorage.setItem(storageCacheKey, JSON.stringify({ data: epData, timestamp: Date.now() }));
+              }
+            }
           }
         }
 
@@ -1074,20 +758,6 @@ function WatchContent() {
         let targetStreamUrl = "";
         let targetReferer   = "https://kwik.cx/";
         let selectedProvider = provider;
-        let targetSubtitles: any[] = [];
-
-        const sourceCacheKey = `${anilistId}:${activeCategory}:${epNum}`;
-        const sourceCache = loadSourceCache();
-        const cachedSource = sourceCache[sourceCacheKey];
-        const sourceCacheHit =
-          cachedSource && Date.now() - (cachedSource.cachedAt || 0) < SOURCE_CACHE_TTL_MS;
-
-        if (sourceCacheHit) {
-          targetStreamUrl = cachedSource.streamUrl;
-          targetReferer = cachedSource.referer;
-          selectedProvider = cachedSource.selectedProvider;
-          targetSubtitles = cachedSource.subtitles || [];
-        }
 
         const fallbackQueue = Array.from(new Set([
           provider,
@@ -1095,7 +765,7 @@ function WatchContent() {
           ...(epData ? Object.keys(epData?.results?.providers || epData?.providers || {}) : []),
         ]));
 
-        for (const provKey of (sourceCacheHit ? [] : fallbackQueue)) {
+        for (const provKey of fallbackQueue) {
           if (cancelled) return;
 
           let slug = "";
@@ -1122,7 +792,6 @@ function WatchContent() {
             const data = await watchRes.json();
             let url = data?.results?.bestStream?.url ?? data?.bestStream?.url;
             let ref = data?.results?.bestStream?.referer ?? data?.bestStream?.referer;
-            const subs = data?.results?.subtitles ?? data?.subtitles ?? [];
 
             if (!url) {
               const streams = (data?.results?.streams ?? data?.streams ?? []) as any[];
@@ -1134,7 +803,6 @@ function WatchContent() {
               targetStreamUrl  = url;
               if (ref) targetReferer = ref;
               selectedProvider = provKey;
-              targetSubtitles = Array.isArray(subs) ? subs : [];
               break;
             }
           } catch {
@@ -1146,17 +814,6 @@ function WatchContent() {
           throw new Error("All providers failed. Try switching the audio track or refreshing.");
         }
         if (cancelled) return;
-
-        if (!sourceCacheHit) {
-          sourceCache[sourceCacheKey] = {
-            streamUrl: targetStreamUrl,
-            referer: targetReferer,
-            selectedProvider,
-            subtitles: targetSubtitles,
-            cachedAt: Date.now(),
-          };
-          saveSourceCache(sourceCache);
-        }
 
         if (selectedProvider !== provider) {
           const p = new URLSearchParams(searchParams.toString());
@@ -1173,11 +830,7 @@ function WatchContent() {
           savedTimeRef.current = 0;
         } else {
           try {
-            const activeId = localStorage.getItem("streamanime_active_profile_id");
-            const storageKey = activeId
-              ? `streamanime_watch_history_${activeId}`
-              : "streamanime_watch_history";
-            const raw = localStorage.getItem(storageKey);
+            const raw = localStorage.getItem("streamanime_watch_history");
             if (raw) {
               const list = JSON.parse(raw);
               const log = list.find(
@@ -1198,17 +851,6 @@ function WatchContent() {
           `/api/stream-proxy` +
           `?url=${encodeURIComponent(targetStreamUrl)}` +
           `&referer=${encodeURIComponent(targetReferer)}`;
-
-        setSubtitleTracks(
-          targetSubtitles
-            .filter((s: any) => s?.url)
-            .map((s: any) => ({
-              url: `/api/stream-proxy?url=${encodeURIComponent(s.url)}&referer=${encodeURIComponent(targetReferer)}`,
-              label: s.label || s.language || "Subtitles",
-              language: s.language || s.lang || "en",
-              isDefault: !!s.isDefault || !!s.default,
-            }))
-        );
 
         destroyHls();
         if (cancelled) return;
@@ -1321,147 +963,7 @@ function WatchContent() {
 
     run();
     return () => { cancelled = true; };
-  }, [provider, anilistId, activeCategory, currentSlug, epNum, destroyHls, pathname, router, searchParams, autoplay, captionsEnabled, commitPlaybackSessionToStorageLog, isExternalMedia]);
-
-  // --- NATIVE MOVIE/TV STREAM PIPELINE (no iframe, no third-party embed) ---
-  useEffect(() => {
-    if (!isExternalMedia) return;
-
-    let cancelled = false;
-
-    async function runExternal() {
-      try {
-        setLoading(true);
-        setError(null);
-        setExternalStreamUrl(null);
-        setStatus(isExternalMovie ? "Locating movie stream..." : "Locating episode stream...");
-        destroyHls();
-
-        // Movie and TV requests must stay on the TMDB Embed API. The anime
-        // backend has no matching provider data for these titles.
-        const tmdbId = anilistId.replace(/^tmdb-(?:movie|tv)-/i, "");
-        if (!/^\d+$/.test(tmdbId)) {
-          throw new Error("This title is missing its TMDB ID, so its movie/TV providers cannot be queried.");
-        }
-
-        let enabledProviders: string[] = [];
-        try {
-          const providersRes = await fetch(`${TMDB_EMBED_API}/api/providers`);
-          const providersData = providersRes.ok ? await providersRes.json() : null;
-          enabledProviders = Array.isArray(providersData?.providers)
-            ? providersData.providers
-              .filter((item: any) => item?.enabled && item?.name)
-              .map((item: any) => String(item.name))
-            : [];
-          if (!cancelled) setAvailableProviders(enabledProviders);
-        } catch {
-          // The aggregate endpoint below can still answer if provider status
-          // is temporarily unavailable.
-        }
-
-        const selectedProvider = enabledProviders.includes(provider) ? provider : enabledProviders[0];
-        if (selectedProvider && selectedProvider !== provider) {
-          const params = new URLSearchParams(searchParams.toString());
-          params.set("provider", selectedProvider);
-          router.replace(`${pathname}?${params.toString()}`);
-          return;
-        }
-
-        const streamPath = isExternalMovie
-          ? `movie/${tmdbId}`
-          : `series/${tmdbId}?season=${encodeURIComponent(seasonNum)}&episode=${encodeURIComponent(epNum)}`;
-        const endpoint = selectedProvider
-          ? `${TMDB_EMBED_API}/api/streams/${encodeURIComponent(selectedProvider)}/${streamPath}`
-          : `${TMDB_EMBED_API}/api/streams/${streamPath}`;
-
-        const res = await fetch(endpoint);
-        if (!res.ok) throw new Error(`Stream lookup failed: ${res.status} ${res.statusText}`);
-
-        const data = await res.json();
-        
-        // TMDB Embed API responds with { success, streams: [...] }, not the
-        // anime API's { sources: [...] } shape. Prefer HLS/VixSrc, then a
-        // browser-playable MP4, matching the selection used by the working
-        // standalone player.
-        const streams = Array.isArray(data?.streams) ? data.streams : [];
-        const playableStreams = streams.filter((stream: any) => {
-          const url = String(stream?.url || "");
-          const label = String(stream?.name || stream?.title || stream?.provider || "").toLowerCase();
-          return url && !/\.mkv(?:$|[?#])/i.test(url) && !label.includes("mpv player") && !label.includes("all players");
-        });
-        const chosenStream = playableStreams.find((stream: any) =>
-          /vixsrc/i.test(String(stream?.name || stream?.title || stream?.provider || "")) ||
-          /\.m3u8(?:$|[?#])/i.test(String(stream?.url || ""))
-        ) ?? playableStreams.find((stream: any) => /\.mp4(?:$|[?#])/i.test(String(stream?.url || "")));
-        const streamUrl = chosenStream?.url ? String(chosenStream.url) : null;
-
-        if (!streamUrl) {
-          const reason = data?.message || data?.error || "No browser-playable stream returned by the enabled providers.";
-          throw new Error(reason);
-        }
-        if (cancelled || !videoRef.current) return;
-
-        setExternalStreamUrl(streamUrl);
-        setEpisodeTitle(isExternalMovie ? "Full Feature Film" : `Episode ${epNum}`);
-
-        const isHlsStream = streamUrl.includes(".m3u8");
-
-        if (isHlsStream) {
-          const { default: Hls } = await import("hls.js");
-          if (cancelled || !videoRef.current) return;
-
-          if (Hls.isSupported()) {
-            const hls = new Hls({ enableWorker: false });
-            hlsRef.current = hls;
-            hls.loadSource(streamUrl);
-            hls.attachMedia(videoRef.current);
-
-            hls.on(Hls.Events.MANIFEST_PARSED, () => {
-              if (cancelled) return;
-              setLoading(false);
-              setStatus("Playback ready");
-              if (autoplay) videoRef.current?.play().catch(() => {});
-            });
-
-            hls.on(Hls.Events.ERROR, (_: any, errData: any) => {
-              if (errData.fatal && !cancelled) {
-                setError("Playback failed. Try reloading.");
-                setLoading(false);
-              }
-            });
-          } else if (videoRef.current.canPlayType("application/vnd.apple.mpegurl")) {
-            videoRef.current.src = streamUrl;
-            videoRef.current.addEventListener("loadedmetadata", () => {
-              if (cancelled) return;
-              setLoading(false);
-              setStatus("Playback ready");
-              if (autoplay) videoRef.current?.play().catch(() => {});
-            }, { once: true });
-          } else {
-            throw new Error("Browser does not support HLS playback.");
-          }
-        } else {
-          // Direct progressive file (e.g. .mp4) — feed straight to the native player.
-          videoRef.current.src = streamUrl;
-          videoRef.current.load();
-          videoRef.current.addEventListener("loadedmetadata", () => {
-            if (cancelled) return;
-            setLoading(false);
-            setStatus("Playback ready");
-            if (autoplay) videoRef.current?.play().catch(() => {});
-          }, { once: true });
-        }
-      } catch (err: any) {
-        if (!cancelled) {
-          setError(err.message ?? "Failed to load stream for this title.");
-          setLoading(false);
-        }
-      }
-    }
-
-    runExternal();
-    return () => { cancelled = true; };
-  }, [isExternalMedia, isExternalMovie, anilistId, seasonNum, epNum, destroyHls, autoplay, mediaType, urlProvider, provider, pathname, router, searchParams]);
+  }, [provider, anilistId, activeCategory, currentSlug, epNum, destroyHls, pathname, router, searchParams, autoplay, captionsEnabled, commitPlaybackSessionToStorageLog]);
 
   const totalEpisodesCount = episodes.length;
   const chunkRanges: { start: number; end: number; label: string }[] = [];
@@ -1495,49 +997,6 @@ function WatchContent() {
   const hasPrevEpisode = episodes.some((e) => Number(e.number) < parsedEpNum);
   const hasNextEpisodeElement = episodes.some((e) => Number(e.number) > parsedEpNum);
 
-  useEffect(() => {
-    if (!isPlaying || episodes.length === 0 || !anilistId || anilistId === "0") return;
-
-    const prefetchTimer = setTimeout(() => {
-      const nextNum = parsedEpNum + 1;
-      const nextEp = episodes.find((e) => Number(e.number) === nextNum);
-      if (!nextEp) return;
-
-      const nextSlug = (nextEp as any).slug ?? (nextEp as any).id;
-      if (!nextSlug) return;
-
-      const cacheKey = `${anilistId}:${activeCategory}:${nextNum}`;
-      const existing = loadSourceCache();
-      if (existing[cacheKey] && Date.now() - (existing[cacheKey].cachedAt || 0) < SOURCE_CACHE_TTL_MS) {
-        return; 
-      }
-
-      fetch(`${BACKEND_API}/watch/${provider}/${anilistId}/${activeCategory}/${encodeURIComponent(nextSlug)}`)
-        .then((res) => (res.ok ? res.json() : null))
-        .then((data) => {
-          if (!data) return;
-          const url = data?.results?.bestStream?.url ?? data?.bestStream?.url;
-          const ref = data?.results?.bestStream?.referer ?? data?.bestStream?.referer;
-          const subs = data?.results?.subtitles ?? data?.subtitles ?? [];
-          if (!url) return;
-
-          const fresh = loadSourceCache();
-          fresh[cacheKey] = {
-            streamUrl: url,
-            referer: ref || "https://kwik.cx/",
-            selectedProvider: provider,
-            subtitles: Array.isArray(subs) ? subs : [],
-            cachedAt: Date.now(),
-          };
-          saveSourceCache(fresh);
-        })
-        .catch(() => {});
-    }, 5000); 
-
-    return () => clearTimeout(prefetchTimer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isPlaying, episodes, anilistId, activeCategory, provider]);
-
   return (
     <main className="min-h-screen bg-neutral-950 text-neutral-100 font-sans antialiased pb-20 selection:bg-orange-500 selection:text-white overflow-x-hidden pt-24 px-6 md:px-12">
       
@@ -1547,6 +1006,7 @@ function WatchContent() {
         `}} />
       )}
 
+      {/* RE-ENGINEERED COMPACT PREMIUM STYLING RULES */}
       <style dangerouslySetInnerHTML={{__html: `
         @keyframes netflixCountdown {
           0% { width: 0%; }
@@ -1555,6 +1015,15 @@ function WatchContent() {
         .animate-netflix-countdown {
           animation: netflixCountdown ${SKIP_COUNTDOWN_DURATION}ms linear forwards;
         }
+        video::-webkit-media-text-track-container {
+          display: none !important;
+        }
+        video::cue {
+          color: transparent !important;
+          background: transparent !important;
+        }
+        
+        /* 64x64px Clean Interactive Mobile Touch Box Extension */
         .mobile-expand-hitbox {
           position: relative;
         }
@@ -1583,35 +1052,6 @@ function WatchContent() {
           border-radius: 0px !important;
           margin: 0px !important;
           background: #000000 !important;
-        }
-
-        input[type="range"] {
-          -webkit-appearance: none;
-          appearance: none;
-          background: transparent;
-          touch-action: manipulation;
-        }
-
-        input[type="range"]::-webkit-slider-thumb {
-          -webkit-appearance: none;
-          appearance: none;
-          width: 16px;
-          height: 16px;
-          border-radius: 9999px;
-          background: #f97316;
-          border: 2px solid rgba(255,255,255,0.95);
-          box-shadow: 0 0 0 3px rgba(249,115,22,0.2);
-          cursor: pointer;
-        }
-
-        input[type="range"]::-moz-range-thumb {
-          width: 16px;
-          height: 16px;
-          border-radius: 9999px;
-          background: #f97316;
-          border: 2px solid rgba(255,255,255,0.95);
-          box-shadow: 0 0 0 3px rgba(249,115,22,0.2);
-          cursor: pointer;
         }
       `}} />
 
@@ -1673,6 +1113,7 @@ function WatchContent() {
           <span className="text-xs font-mono text-white font-bold truncate max-w-md">{animeTitle}</span>
         </div>
 
+        {/* INTEGRATED THEATRE VIEWPORT SYSTEM */}
         <div
           ref={playerContainerRef}
           onMouseMove={triggerControlsActivity}
@@ -1682,18 +1123,9 @@ function WatchContent() {
           }`}
         >
           {loading && (
-            <div className="absolute inset-0 z-40 overflow-hidden">
-              {episodeSnapshot && (
-                <div
-                  className="absolute inset-0 bg-cover bg-center scale-110 blur-md opacity-40"
-                  style={{ backgroundImage: `url(${episodeSnapshot})` }}
-                  aria-hidden="true"
-                />
-              )}
-              <div className="absolute inset-0 bg-neutral-950/70" />
-              <div className="absolute inset-0 flex items-center justify-center">
-                <div className="animate-spin rounded-full h-8 w-8 border-2 border-orange-500 border-t-transparent" />
-              </div>
+            <div className="absolute inset-0 flex flex-col items-center justify-center bg-neutral-950/95 z-40 space-y-4">
+              <div className="animate-spin rounded-full h-8 w-8 border-2 border-orange-500 border-t-transparent" />
+              <p className="text-xs uppercase tracking-widest text-neutral-400 font-mono font-medium animate-pulse">{status}</p>
             </div>
           )}
 
@@ -1708,102 +1140,28 @@ function WatchContent() {
           <video
             ref={videoRef}
             onClick={handleVideoClick}
-            onDoubleClick={(e) => {
-              const rect = e.currentTarget.getBoundingClientRect();
-              const clickX = e.clientX - rect.left;
-              const isRightSide = clickX > rect.width / 2;
-              skipSeconds(isRightSide ? 10 : -10);
-              setSeekFlash({ side: isRightSide ? "right" : "left", key: Date.now() });
-              window.setTimeout(() => setSeekFlash(null), 500);
-            }}
+            onDoubleClick={toggleFullscreen}
             onTimeUpdate={handleTimeUpdate}
             onDurationChange={() => {
               if (videoRef.current?.duration) {
                 const totalDur = videoRef.current.duration;
                 setDuration(totalDur);
                 commitPlaybackSessionToStorageLog(videoRef.current.currentTime, totalDur);
-                if (totalDur > 60 && !isNaN(totalDur) && skipIntervals.length === 0 && !isExternalMedia) {
+                if (totalDur > 60 && !isNaN(totalDur) && skipIntervals.length === 0) {
                   fetchTimestampsFromAniSkip(totalDur);
                 }
               }
             }}
-            onPlay={() => {
-              setIsPlaying(true);
-              setLoading(false);
-              setStatus("Playback ready");
-            }}
+            onPlay={() => setIsPlaying(true)}
             onPause={() => setIsPlaying(false)}
-            onWaiting={() => {
-              setLoading(true);
-              setStatus("Buffering...");
-            }}
-            onCanPlay={() => {
-              setLoading(false);
-              setStatus("Playback ready");
-            }}
-            onLoadedMetadata={() => {
-              setLoading(false);
-              setStatus("Playback ready");
-            }}
             onEnded={navigateToNextEpisode}
-            onProgress={() => {
-              const v = videoRef.current;
-              if (!v || !v.duration) return;
-              const ranges = v.buffered;
-              if (ranges.length > 0) {
-                const bufferedEnd = ranges.end(ranges.length - 1);
-                setBufferedPercent((bufferedEnd / v.duration) * 100);
-              }
-            }}
             controls={false}
             playsInline
+            webkit-playsinline="true"
             className={`w-full h-full cursor-pointer bg-black ${isCropFill ? "object-cover" : "object-contain"}`}
-            crossOrigin="anonymous"
-          >
-            {subtitleTracks.map((t, i) => (
-              <track
-                key={t.url}
-                kind="subtitles"
-                src={t.url}
-                srcLang={t.language}
-                label={t.label}
-                default={captionsEnabled && (t.isDefault || i === 0)}
-              />
-            ))}
-          </video>
+          />
 
-          {seekFlash && (
-            <div
-              key={seekFlash.key}
-              className={`absolute top-0 bottom-0 w-1/2 z-20 flex items-center pointer-events-none ${
-                seekFlash.side === "right" ? "right-0 justify-end pr-8 sm:pr-16" : "left-0 justify-start pl-8 sm:pl-16"
-              }`}
-            >
-              <div className="flex flex-col items-center gap-1 animate-[seekFlash_0.5s_ease-out]">
-                <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-full bg-white/10 flex items-center justify-center text-xl sm:text-2xl">
-                  {seekFlash.side === "right" ? "⏩" : "⏪"}
-                </div>
-                <span className="text-xs font-mono font-bold text-neutral-200">10s</span>
-              </div>
-            </div>
-          )}
-          <style jsx>{`
-            @keyframes seekFlash {
-              0% { opacity: 0; transform: scale(0.85); }
-              25% { opacity: 1; transform: scale(1); }
-              100% { opacity: 0; transform: scale(1); }
-            }
-          `}</style>
-          <style jsx global>{`
-            * {
-              -webkit-tap-highlight-color: transparent;
-            }
-            a, button, input[type="range"] {
-              touch-action: manipulation;
-            }
-          `}</style>
-
-
+          {/* PREMIUM TOP HUD OVERLAY PANEL — Title left, Volume + CC right (fullscreen removed) */}
           <div 
             className={`absolute top-0 inset-x-0 bg-gradient-to-b from-black/90 via-black/50 to-transparent p-4 sm:p-6 pb-14 z-30 transition-all duration-300 pointer-events-none flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
               showControls ? "opacity-100 translate-y-0" : "opacity-0 -translate-y-2"
@@ -1813,7 +1171,9 @@ function WatchContent() {
               {epNum}. {episodeTitle || `Episode ${epNum}`}
             </div>
 
+            {/* Volume + CC controls — shifted right after fullscreen removal */}
             <div className="flex items-center space-x-4 self-end sm:self-auto justify-end ml-auto pointer-events-auto">
+              {/* Volume HUD Block */}
               <div className="flex items-center space-x-2 bg-black/40 backdrop-blur-md px-3 py-1.5 rounded-lg border border-neutral-800/40">
                 <button onClick={toggleMute} className="mobile-expand-hitbox text-[10px] font-mono font-bold text-neutral-400 hover:text-neutral-200 transition tracking-wider">
                   {isMuted ? "UNMUTE" : "VOLUME"}
@@ -1823,8 +1183,18 @@ function WatchContent() {
                   className="w-16 sm:w-20 h-1 bg-neutral-800 appearance-none cursor-pointer accent-orange-500 rounded-full" />
               </div>
 
+              {/* CC Toggle Button */}
               <button
-                onClick={() => applyCaptionMode(!captionsEnabled)}
+                onClick={() => {
+                  const nextMode = !captionsEnabled;
+                  setCaptionsEnabled(nextMode);
+                  if (videoRef.current) {
+                    const textTracks = videoRef.current.textTracks;
+                    for (let i = 0; i < textTracks.length; i++) {
+                      textTracks[i].mode = nextMode ? "showing" : "hidden";
+                    }
+                  }
+                }}
                 className={`mobile-expand-hitbox hover:scale-105 active:scale-95 flex items-center justify-center outline-none bg-black/40 border border-neutral-800/30 p-2 rounded-lg backdrop-blur-md transition duration-200 ${
                   captionsEnabled ? "opacity-100" : "opacity-40"
                 }`}
@@ -1840,11 +1210,13 @@ function WatchContent() {
             </div>
           </div>
 
+          {/* CENTERED KINETIC CONTROLS PLATFORM — pointer-events-none on container, auto on each button */}
           <div 
-            className={`absolute inset-0 flex items-center justify-center z-30 transition-all duration-300 pointer-events-none gap-12 sm:gap-20 ${
+            className={`absolute inset-0 flex items-center justify-center z-30 transition-all duration-300 pointer-events-none gap-8 sm:gap-14 ${
               showControls ? "opacity-100 scale-100" : "opacity-0 scale-95"
             }`}
           >
+            {/* Rewind 10s Trigger — background removed */}
             <button
               onClick={() => skipSeconds(-10)}
               className="pointer-events-auto mobile-expand-hitbox w-14 h-14 sm:w-16 sm:h-16 flex items-center justify-center rounded-full bg-transparent hover:bg-black/20 border border-transparent hover:border-neutral-800/30 transition duration-200 group/btn transform hover:scale-110 active:scale-90 shadow-none backdrop-blur-none"
@@ -1858,6 +1230,7 @@ function WatchContent() {
               />
             </button>
 
+            {/* Core Center Play / Pause Cluster */}
             <button
               onClick={togglePlay}
               className="pointer-events-auto mobile-expand-hitbox w-24 h-24 sm:w-28 sm:h-28 flex items-center justify-center bg-transparent text-white transition-all duration-200 transform hover:scale-110 active:scale-95 filter drop-shadow-[0_4px_12px_rgba(0,0,0,0.5)]"
@@ -1875,6 +1248,7 @@ function WatchContent() {
               />
             </button>
 
+            {/* Fast Forward 10s Trigger — background removed */}
             <button
               onClick={() => skipSeconds(10)}
               className="pointer-events-auto mobile-expand-hitbox w-14 h-14 sm:w-16 sm:h-16 flex items-center justify-center rounded-full bg-transparent hover:bg-black/20 border border-transparent hover:border-neutral-800/30 transition duration-200 group/btn transform hover:scale-110 active:scale-90 shadow-none backdrop-blur-none"
@@ -1889,6 +1263,7 @@ function WatchContent() {
             </button>
           </div>
 
+          {/* MASTER SUBTITLE RENDER CONTAINER */}
           {captionsEnabled && currentCaption && (
             <div className="absolute inset-x-4 bottom-28 md:bottom-32 flex items-center justify-center pointer-events-none z-30 text-center">
               <p className="px-4 py-1.5 rounded bg-black/85 text-white font-sans font-medium text-sm sm:text-base md:text-lg lg:text-xl tracking-wide max-w-[85%] border border-neutral-900/40 shadow-xl drop-shadow-md whitespace-pre-line leading-relaxed">
@@ -1897,6 +1272,7 @@ function WatchContent() {
             </div>
           )}
 
+          {/* ANI-SKIP DESCRIPTOR FLOATING TRIGGER BUTTON */}
           {currentActiveSkip && showSkipButton && !loading && (
             <button
               onClick={executeManualSkipSegment}
@@ -1910,10 +1286,12 @@ function WatchContent() {
             </button>
           )}
 
+          {/* STREAM DECK BASE LOWER TIMELINE HUD BLOCK */}
           <div className={`absolute inset-x-0 bottom-0 bg-gradient-to-t from-black via-black/90 to-transparent p-4 sm:p-6 pt-20 flex flex-col transition-all duration-300 z-40 pointer-events-none ${
             showControls ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4"
           } ${isFullscreen ? "space-y-5 pb-8" : "space-y-3"}`}>
             
+            {/* TIMELINE TIMESTEP TRACKBAR CONTAINER */}
             <div className="relative w-full flex items-center h-4 group/timeline pointer-events-auto">
               <div className="absolute left-0 right-0 h-1.5 bg-neutral-800/60 rounded-full flex overflow-hidden">
                 {duration > 0 && skipIntervals.length > 0 ? (
@@ -1949,38 +1327,52 @@ function WatchContent() {
                 )}
               </div>
 
-              <div
-                className="absolute left-0 h-1.5 bg-neutral-600/50 rounded-full pointer-events-none transition-all duration-300"
-                style={{ width: `${bufferedPercent}%` }} />
-
               <div 
                 className="absolute left-0 h-1.5 bg-orange-500 rounded-full pointer-events-none transition-all duration-75" 
                 style={{ width: `${duration ? (currentTime / duration) * 100 : 0}%` }} />
 
               <input
                 type="range" min={0} max={duration || 100} step={0.1} value={currentTime} onChange={handleScrub}
-                className="absolute inset-0 w-full h-full cursor-pointer z-20 rounded-full touch-manipulation" />
+                className="absolute w-full h-full opacity-0 cursor-pointer z-20" />
             </div>
 
+            {/* DYNAMIC METRIC DISPATCH AND MULTI-MODE ACTION FOOTER */}
             <div className="relative flex items-center pointer-events-auto">
 
+              {/* LEFT: Playback timers */}
               <div className="text-xs font-mono text-neutral-400 tracking-tight shrink-0">
                 <span className="text-neutral-100 font-bold bg-neutral-900/60 px-2 py-1 rounded border border-neutral-800/40">{formatTime(currentTime)}</span>
                 <span className="mx-2 text-neutral-700">/</span>
                 <span>{formatTime(duration)}</span>
               </div>
 
+              {/* CENTER: Action buttons — only visible in fullscreen, absolutely centered */}
               {isFullscreen && (
                 <div className="absolute left-1/2 -translate-x-1/2 flex items-center space-x-1.5">
-                  <ToggleSwitch checked={autoplay} onChange={toggleAutoplayState} label="Autoplay" compact />
+                  <label className="mobile-expand-hitbox flex items-center space-x-2 px-3 py-1.5 rounded-lg hover:bg-neutral-800/40 cursor-pointer select-none group text-xs font-mono text-neutral-300">
+                    <input
+                      type="checkbox" checked={autoplay} onChange={toggleAutoplayState}
+                      className="w-3.5 h-3.5 rounded border-neutral-700 bg-neutral-950 text-orange-500 focus:ring-0 cursor-pointer accent-orange-500" />
+                    <span className="group-hover:text-white transition hidden sm:inline">Autoplay</span>
+                  </label>
 
                   <div className="w-px h-4 bg-neutral-800" />
 
-                  <ToggleSwitch checked={autoskip} onChange={toggleAutoskipState} label="Auto-Skip" compact />
+                  <label className="mobile-expand-hitbox flex items-center space-x-2 px-3 py-1.5 rounded-lg hover:bg-neutral-800/40 cursor-pointer select-none group text-xs font-mono text-neutral-300">
+                    <input
+                      type="checkbox" checked={autoskip} onChange={toggleAutoskipState}
+                      className="w-3.5 h-3.5 rounded border-neutral-700 bg-neutral-950 text-orange-500 focus:ring-0 cursor-pointer accent-orange-500" />
+                    <span className="group-hover:text-white transition hidden sm:inline">Auto-Skip</span>
+                  </label>
 
                   <div className="w-px h-4 bg-neutral-800" />
 
-                  <ToggleSwitch checked={autonext} onChange={toggleAutonextState} label="Auto-Next" compact />
+                  <label className="mobile-expand-hitbox flex items-center space-x-2 px-3 py-1.5 rounded-lg hover:bg-neutral-800/40 cursor-pointer select-none group text-xs font-mono text-neutral-300">
+                    <input
+                      type="checkbox" checked={autonext} onChange={toggleAutonextState}
+                      className="w-3.5 h-3.5 rounded border-neutral-700 bg-neutral-950 text-orange-500 focus:ring-0 cursor-pointer accent-orange-500" />
+                    <span className="group-hover:text-white transition hidden sm:inline">Auto-Next</span>
+                  </label>
 
                   <div className="w-px h-4 bg-neutral-800" />
 
@@ -2003,6 +1395,7 @@ function WatchContent() {
                 </div>
               )}
 
+              {/* RIGHT: Fullscreen toggle — background removed, bigger icon */}
               <button
                 onClick={toggleFullscreen}
                 className="mobile-expand-hitbox ml-auto p-2 bg-transparent hover:bg-neutral-800/20 border border-transparent hover:border-neutral-800/30 rounded-lg transition active:scale-95 flex items-center justify-center shrink-0"
@@ -2020,11 +1413,38 @@ function WatchContent() {
           </div>
         </div>
 
+        {/* DEFAULT COMPACT STANDARD FOOTER OPTIONS DECK */}
         <div className="w-full bg-neutral-900/40 py-1.5 px-4 rounded-xl border border-neutral-900 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 shadow-md backdrop-blur-sm">
           <div className="flex flex-wrap items-center gap-6 text-xs font-mono text-neutral-300">
-            <ToggleSwitch checked={autoplay} onChange={toggleAutoplayState} label="Autoplay" />
-            <ToggleSwitch checked={autoskip} onChange={toggleAutoskipState} label="Auto-Skip" />
-            <ToggleSwitch checked={autonext} onChange={toggleAutonextState} label="Auto-Next" />
+            <label className="mobile-expand-hitbox flex items-center space-x-2.5 cursor-pointer select-none group relative py-1">
+              <input
+                type="checkbox"
+                checked={autoplay}
+                onChange={toggleAutoplayState}
+                className="w-3.5 h-3.5 rounded border-neutral-800 bg-neutral-950 text-orange-500 focus:ring-0 focus:ring-offset-0 checked:bg-orange-500 cursor-pointer accent-orange-500"
+              />
+              <span className="group-hover:text-neutral-100 transition">Autoplay</span>
+            </label>
+
+            <label className="mobile-expand-hitbox flex items-center space-x-2.5 cursor-pointer select-none group relative py-1">
+              <input
+                type="checkbox"
+                checked={autoskip}
+                onChange={toggleAutoskipState}
+                className="w-3.5 h-3.5 rounded border-neutral-800 bg-neutral-950 text-orange-500 focus:ring-0 focus:ring-offset-0 checked:bg-orange-500 cursor-pointer accent-orange-500"
+              />
+              <span className="group-hover:text-neutral-100 transition">Auto-Skip</span>
+            </label>
+
+            <label className="mobile-expand-hitbox flex items-center space-x-2.5 cursor-pointer select-none group relative py-1">
+              <input
+                type="checkbox"
+                checked={autonext}
+                onChange={toggleAutonextState}
+                className="w-3.5 h-3.5 rounded border-neutral-800 bg-neutral-950 text-orange-500 focus:ring-0 focus:ring-offset-0 checked:bg-orange-500 cursor-pointer accent-orange-500"
+              />
+              <span className="group-hover:text-neutral-100 transition">Auto-Next</span>
+            </label>
           </div>
 
           <div className="flex items-center space-x-2 self-end sm:self-auto">
@@ -2041,24 +1461,6 @@ function WatchContent() {
               className="mobile-expand-hitbox px-3 py-1 rounded-md bg-neutral-950 border border-neutral-900 text-neutral-400 hover:text-neutral-200 disabled:opacity-20 disabled:hover:text-neutral-400 font-mono font-bold text-[10px] tracking-wider uppercase transition active:scale-95"
             >
               Next &rarr;
-            </button>
-            <button
-              onClick={handleDownload}
-              disabled={downloadProgress !== null}
-              title={downloadedFlag ? "Saved to your Downloads" : "Download this episode"}
-              className={`mobile-expand-hitbox px-3 py-1 rounded-md bg-neutral-950 border font-mono font-bold text-[10px] tracking-wider uppercase transition active:scale-95 ${
-                downloadedFlag && downloadProgress === null
-                  ? "border-orange-500/40 text-orange-500"
-                  : "border-neutral-900 text-neutral-400 hover:text-orange-500 hover:border-orange-500/40"
-              } disabled:active:scale-100`}
-            >
-              {downloadProgress === null
-                ? downloadedFlag ? "✓ Downloaded" : "↓ Download"
-                : downloadProgress === -1
-                ? "Downloading..."
-                : downloadProgress === 100
-                ? "✓ Saved"
-                : `${downloadProgress}%`}
             </button>
           </div>
         </div>
@@ -2174,7 +1576,7 @@ function WatchContent() {
                   {currentDisplayedEpisodes.map((ep) => {
                     const epSlug = ep.id.includes("/") ? ep.id.split("/").pop() : ep.id;
                     const isActive = Number(ep.number) === parseFloat(epNum);
-                    const href = `/watch?provider=${provider}&id=${anilistId}&category=${activeCategory}&slug=${encodeURIComponent(epSlug || "")}&epNum=${ep.number}&type=${mediaType}`;
+                    const href = `/watch?provider=${provider}&anilistId=${anilistId}&category=${activeCategory}&slug=${encodeURIComponent(epSlug || "")}&epNum=${ep.number}`;
 
                     if (viewStyle === "compact") {
                       return (
