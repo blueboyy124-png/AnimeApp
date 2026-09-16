@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useRef, useCallback, useEffect, Suspense } from "react";
+import React, { useState, useRef, useCallback, useEffect, useMemo, Suspense } from "react";
 import Link from "next/link";
 import { useRouter, usePathname } from "next/navigation";
 import TopBar from "../components/TopBar";
@@ -9,6 +9,7 @@ import { supabase } from "../utils/supabase";
 import WatchPlayer from "./components/WatchPlayer";
 import EpisodeInfo from "./components/EpisodeInfo";
 import Sidebar from "./components/Sidebar";
+import { RecommendationsRow } from "./components/RecommendationsRow";
 
 import { useWatchRoute } from "./hooks/useWatchRoute";
 import { useWatchProgress } from "./hooks/useWatchProgress";
@@ -105,6 +106,7 @@ function WatchContent() {
   const [hasDubAvailable, setHasDubAvailable] = useState<boolean>(false);
   const [availableProviders, setAvailableProviders] = useState<string[]>([]);
   const [externalStreamUrl, setExternalStreamUrl] = useState<string | null>(null);
+  const [relatedAnime, setRelatedAnime] = useState<any[]>([]);
 
   // Active Profile on Mount
   useEffect(() => {
@@ -218,6 +220,7 @@ function WatchContent() {
     handleTimeUpdate,
   } = usePlayback({
     videoRef,
+    playerContainerRef,
     setLoading,
     setStatus,
     setError,
@@ -554,6 +557,26 @@ function WatchContent() {
   const totalEpisodesCount = displayEpisodes.length;
   const currentDisplayedEpisodes = displayEpisodes;
 
+  // Fetch related anime for "More Like This" section
+  useEffect(() => {
+    if (!anilistId || isExternalMedia) return;
+    let cancelled = false;
+    const fetchRelated = async () => {
+      try {
+        const res = await fetch(`/api/anime/${anilistId}/relations`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (cancelled) return;
+        const relations = data?.relations || data?.related || data || [];
+        setRelatedAnime(Array.isArray(relations) ? relations.slice(0, 12) : []);
+      } catch {
+        // Non-fatal — recommendations are optional
+      }
+    };
+    fetchRelated();
+    return () => { cancelled = true; };
+  }, [anilistId, isExternalMedia]);
+
   // Auto-scroll the season strip
   useEffect(() => {
     if (!seasonListRef.current || tmdbSeasons.length === 0) return;
@@ -626,6 +649,22 @@ function WatchContent() {
     },
     [handleProviderChange, destroyHls, setIsPlaying]
   );
+
+  // Derive "More Like This" recommendations from related anime data
+  const moreLikeThisItems = useMemo(() => {
+    if (!relatedAnime || relatedAnime.length === 0) return [];
+    return relatedAnime.map((rel: any) => {
+      const title = rel.title?.english || rel.title?.romaji || rel.title?.userPreferred || "Untitled";
+      const coverImage = rel.coverImage?.extraLarge || rel.coverImage?.large || rel.coverImage?.medium || rel.coverImage || "";
+      return {
+        id: rel.id,
+        title,
+        image: coverImage || "https://images.unsplash.com/photo-1574375927938-d5a98e8edd86?q=80&w=500&auto=format&fit=crop",
+        href: `/watch?provider=${provider}&anilistId=${rel.id}&category=${activeCategory}&slug=${encodeURIComponent(rel.title?.english || rel.title?.romaji || "")}&epNum=1`,
+        subtitle: rel.format || rel.type || undefined,
+      };
+    });
+  }, [relatedAnime, provider, activeCategory]);
 
   return (
     <main className="min-h-screen bg-black text-neutral-100 font-sans pb-24 selection:bg-orange-500 selection:text-white">
@@ -904,6 +943,13 @@ function WatchContent() {
             totalEpisodesCount={totalEpisodesCount}
           />
         </div>
+
+        {/* ── MORE LIKE THIS — Recommendations based on related anime ──── */}
+        {moreLikeThisItems.length > 0 && (
+          <div className="mt-12">
+            <RecommendationsRow items={moreLikeThisItems} label="More Like This" />
+          </div>
+        )}
       </div>
 
       {/* MOBILE BOTTOM NAVIGATION */}

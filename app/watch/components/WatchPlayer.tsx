@@ -176,9 +176,13 @@ export default function WatchPlayer(props: WatchPlayerProps) {
       onMouseMove={triggerControlsActivity}
       onTouchStart={triggerControlsActivity}
       className={`relative w-full aspect-video bg-black overflow-hidden group select-none ${
-        isFullscreen ? "custom-sandbox-fullscreen" : "sm:rounded-sm"
+        isFullscreen ? "custom-sandbox-fullscreen" : "rounded-md"
       }`}
     >
+      {/* ── CINEMATIC GRADIENT OVERLAYS ─────────────────────────────────── */}
+      <div className="player-top-gradient z-10" />
+      <div className="player-bottom-gradient z-10" />
+
       {loading && (
         <div className="absolute inset-0 z-40 overflow-hidden">
           {episodeSnapshot && (
@@ -190,7 +194,7 @@ export default function WatchPlayer(props: WatchPlayerProps) {
           )}
           <div className="absolute inset-0 bg-neutral-950/70" />
           <div className="absolute inset-0 flex items-center justify-center">
-            <div className="animate-spin rounded-full h-8 w-8 border-2 border-orange-500 border-t-transparent" />
+            <div className="animate-spin rounded-full h-10 w-10 border-2 border-orange-500 border-t-transparent" />
           </div>
         </div>
       )}
@@ -413,19 +417,19 @@ export default function WatchPlayer(props: WatchPlayerProps) {
         </div>
       )}
 
-      {/* TOP CONTROL BAR */}
+      {/* TOP CONTROL BAR — Netflix-style title overlay */}
       <div
-        className={`absolute top-0 inset-x-0 bg-gradient-to-b from-black/65 via-black/10 to-transparent p-4 sm:p-6 pb-14 z-30 transition-all duration-200 pointer-events-none flex items-start justify-between gap-3 ${
-          showControls ? "opacity-100 translate-y-0" : "opacity-0 -translate-y-1"
+        className={`absolute top-0 inset-x-0 p-4 sm:p-6 pb-16 z-30 transition-all duration-300 pointer-events-none flex items-start justify-between gap-3 ${
+          showControls ? "opacity-100 translate-y-0" : "opacity-0 -translate-y-2"
         }`}
       >
         <div className="min-w-0 pointer-events-none">
           {!isExternalMovie && (
             <>
-              <div className="text-[11px] font-semibold text-neutral-300/80 uppercase tracking-wider truncate">
+              <div className="text-[11px] font-medium text-neutral-400 uppercase tracking-wider truncate">
                 {animeTitle}
               </div>
-              <div className="text-xs text-neutral-400 mt-0.5">S1 · E{epNum}</div>
+              <div className="text-xs text-neutral-500 mt-0.5">S1 · E{epNum}</div>
             </>
           )}
           <div className="text-base sm:text-lg font-semibold text-white truncate max-w-xl mt-1 tracking-tight leading-snug">

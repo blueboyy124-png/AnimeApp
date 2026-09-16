@@ -13,6 +13,9 @@
   --accent: #e87522;
   --accent-strong: #f08a32;
   --motion-standard: cubic-bezier(0.4, 0, 0.2, 1);
+  --player-gradient: linear-gradient(to top, rgba(0,0,0,0.9) 0%, rgba(0,0,0,0.6) 40%, transparent 100%);
+  --card-lift: translateY(-4px);
+  --card-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
 }
 
 @theme inline {
@@ -20,9 +23,12 @@
   --color-foreground: var(--foreground);
   --font-sans: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  
+
   /* PREMIUM CINEMATIC ANIMATIONS FOR PROFILE GATE */
   --animate-fadeIn: fadeIn 0.25s ease-out forwards;
+  --animate-slideUp: slideUp 0.3s ease-out forwards;
+  --animate-controlsIn: controlsIn 0.25s ease-out forwards;
+  --animate-controlsOut: controlsOut 0.35s ease-in forwards;
 
   @keyframes fadeIn {
     0% {
@@ -33,6 +39,21 @@
       opacity: 1;
       transform: scale(1);
     }
+  }
+
+  @keyframes slideUp {
+    0% { opacity: 0; transform: translateY(12px); }
+    100% { opacity: 1; transform: translateY(0); }
+  }
+
+  @keyframes controlsIn {
+    0% { opacity: 0; transform: translateY(8px); }
+    100% { opacity: 1; transform: translateY(0); }
+  }
+
+  @keyframes controlsOut {
+    0% { opacity: 1; transform: translateY(0); }
+    100% { opacity: 0; transform: translateY(8px); }
   }
 }
 
@@ -99,4 +120,80 @@ a,
   margin: 0 !important;
   background: #000000 !important;
   overflow: hidden !important;
+}
+
+/* ── NETFLIX-STYLE PLAYER CONTROLS ─────────────────────────────────────── */
+.player-controls-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 20;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+.player-controls-overlay.visible {
+  opacity: 1;
+}
+.player-controls-overlay > * {
+  pointer-events: auto;
+}
+.player-top-gradient {
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 120px;
+  background: linear-gradient(to bottom, rgba(0,0,0,0.7) 0%, transparent 100%);
+  pointer-events: none;
+}
+.player-bottom-gradient {
+  position: absolute;
+  bottom: 0; left: 0; right: 0;
+  height: 180px;
+  background: var(--player-gradient);
+  pointer-events: none;
+}
+
+/* ── EPISODE CARD ─────────────────────────────────────────────────────── */
+.episode-card {
+  display: flex;
+  gap: 12px;
+  padding: 10px;
+  border-radius: 6px;
+  transition: background-color 0.2s ease, transform 0.2s ease;
+  cursor: pointer;
+}
+.episode-card:hover {
+  background-color: rgba(255, 255, 255, 0.06);
+}
+.episode-card.active {
+  background-color: rgba(232, 117, 34, 0.08);
+  border: 1px solid rgba(232, 117, 34, 0.2);
+}
+
+/* ── RECOMMENDATION CARD ─────────────────────────────────────────────── */
+.recommendation-card {
+  transition: transform 0.3s ease, box-shadow 0.3s ease;
+}
+.recommendation-card:hover {
+  transform: var(--card-lift);
+  box-shadow: var(--card-shadow);
+}
+
+/* ── SCROLLBAR STYLING ───────────────────────────────────────────────── */
+.scrollbar-thin {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255,255,255,0.15) transparent;
+}
+.scrollbar-thin::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+.scrollbar-thin::-webkit-scrollbar-track {
+  background: transparent;
+}
+.scrollbar-thin::-webkit-scrollbar-thumb {
+  background-color: rgba(255,255,255,0.15);
+  border-radius: 2px;
+}
+.scrollbar-thin::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(255,255,255,0.25);
 }

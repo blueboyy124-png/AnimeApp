@@ -131,14 +131,29 @@ export function usePlayback({
     triggerControlsActivity();
   }, [videoRef, triggerControlsActivity]);
 
-  const applyCaptionMode = useCallback((enabled: boolean) => {
-    setCaptionsEnabled(enabled);
-    if (!videoRef.current) return;
-    const tracks = videoRef.current.textTracks;
-    for (let i = 0; i < tracks.length; i += 1) {
-      tracks[i].mode = enabled ? "showing" : "hidden";
-    }
-  }, [videoRef]);
+  const applyCaptionMode = useCallback(async (enabled: boolean) => {
+  setCaptionsEnabled(enabled);
+  if (!videoRef.current) return;
+
+  // 1. First, do your original job of showing/hiding normal tracks
+  const tracks = videoRef.current.textTracks;
+  for (let i = 0; i < tracks.length; i += 1) {
+    tracks[i].mode = enabled ? "showing" : "hidden";
+  }
+
+  // 2. NEW: If there are no built-in tracks, turn on the AI listener instead!
+  if (tracks.length === 0 && enabled) {
+    // Dynamically load the AI tool
+    const Moonshine = await import("https://jsdelivr.net");
+    
+    // Set up the AI to listen to your videoRef
+    const videoCaptioner = new Moonshine.VideoCaptioner(videoRef.current, "model/tiny", false);
+    
+    // Start generating captions instantly!
+    videoCaptioner.start();
+  }
+}, [videoRef]);
+
 
   const ensureAudioGraph = useCallback(() => {
     if (audioContextRef.current || !videoRef.current) return;
@@ -244,98 +259,51 @@ export function usePlayback({
   //     drop our custom subtitles/skip overlays), so we pin the player over the
   //     viewport instead. Also catches any weird rejection path.
   //
-  // Pending twice: some browsers/webviews accept requestFullscreen() but never
-  // fire fullscreenchange (or reject silently), leaving the button a no-op.
-  // The fallback timer guarantees the sandbox engages (and the button shows a
-  // response) if the native state doesn't materialize within a beat.
-  const fullscreenFallbackRef = useRef<number | null>(null);
-  const clearFsFallback = useCallback(() => {
-    if (fullscreenFallbackRef.current) {
-      window.clearTimeout(fullscreenFallbackRef.current);
-      fullscreenFallbackRef.current = null;
-    }
-  }, []);
-
-  const toggleFullscreen = useCallback(() => {
+  const toggleFullscreen = useCallback(async () => {
     if (typeof document === "undefined") return;
     const container = playerContainerRef.current;
-    clearFsFallback();
 
     const isNativeFull = !!(
       document.fullscreenElement ||
       (document as any).webkitFullscreenElement
     );
 
-    // Currently fullscreen — either natively, or via the CSS sandbox fallback
-    // (isFullscreen can be true with no native element on iOS Safari, or if
-    // requestFullscreen silently failed). Either way, exit.
-    if (isNativeFull || isFullscreen) {
-      if (isNativeFull) {
-        try {
-          const doc = document as any;
-          (doc.exitFullscreen ?? doc.webkitExitFullscreen)?.();
-        } catch {}
-      }
+    // Currently fullscreen — exit
+    if (isNativeFull) {
+      try {
+        const doc = document as any;
+        await (doc.exitFullscreen ?? doc.webkitExitFullscreen)?.();
+      } catch {}
       setIsFullscreen(false);
       triggerControlsActivity();
       return;
     }
 
-    if (container) {
-      // Native Fullscreen API (standard).
-      if (typeof container.requestFullscreen === "function") {
-        let settled = false;
-        const fallback = () => {
-          if (settled) return;
-          settled = true;
-          if (fullscreenFallbackRef.current) window.clearTimeout(fullscreenFallbackRef.current);
-          fullscreenFallbackRef.current = window.setTimeout(() => {
-            fullscreenFallbackRef.current = null;
-            setIsFullscreen(true);
-          }, 250);
-        };
-        try {
-          const req = container.requestFullscreen();
-          if (req && typeof req.then === "function") {
-            req.then(fallback).catch(fallback);
-          } else {
-            fallback();
-          }
-          triggerControlsActivity();
-          return;
-        } catch {
-          fallback();
-        }
-      }
-      // Legacy WebKit prefix (older Safari desktop).
-      if (typeof (container as any).webkitRequestFullscreen === "function") {
-        try {
-          (container as any).webkitRequestFullscreen();
-          clearFsFallback();
-          setIsFullscreen(true);
-          triggerControlsActivity();
-          return;
-        } catch {}
-      }
+    // iOS Safari or no native API — use CSS sandbox fallback
+    if (!container || typeof container.requestFullscreen !== "function") {
+      setIsFullscreen(true);
+      triggerControlsActivity();
+      return;
     }
 
-    // CSS sandbox fallback (iOS Safari & anything without the API).
-    setIsFullscreen(true);
+    // Enter native fullscreen
+    try {
+      await container.requestFullscreen();
+      setIsFullscreen(true);
+    } catch {
+      // Fallback to CSS sandbox if native fails
+      setIsFullscreen(true);
+    }
     triggerControlsActivity();
-  }, [triggerControlsActivity, playerContainerRef, clearFsFallback, isFullscreen]);
+  }, [triggerControlsActivity, playerContainerRef]);
 
   useEffect(() => {
-    // Keep `isFullscreen` truthful whenever the browser itself changes the
-    // fullscreen state (Esc / OS gesture / browser chrome). On iOS Safari this
-    // never fires (no API / sandbox path), so the button's own state rules
-    // there, which is exactly what we want.
+    if (typeof document === "undefined") return;
     const syncFullscreenState = () => {
       const isCurrentlyFull = !!(
         document.fullscreenElement ||
         (document as any).webkitFullscreenElement
       );
-      // Native fullscreen is gone → any pending sandbox fallback is moot.
-      if (!isCurrentlyFull) clearFsFallback();
       setIsFullscreen(isCurrentlyFull);
     };
     document.addEventListener("fullscreenchange", syncFullscreenState);
@@ -344,15 +312,14 @@ export function usePlayback({
       document.removeEventListener("fullscreenchange", syncFullscreenState);
       document.removeEventListener("webkitfullscreenchange", syncFullscreenState);
     };
-  }, [clearFsFallback]);
+  }, []);
 
   useEffect(() => {
     return () => {
-      clearFsFallback();
       if (volumeSliderTimeoutRef.current) window.clearTimeout(volumeSliderTimeoutRef.current);
       audioContextRef.current?.close().catch(() => {});
     };
-  }, [clearFsFallback]);
+  }, []);
 
   const scrollPositionRef = useRef(0);
   const wasFullscreenRef = useRef(false);
