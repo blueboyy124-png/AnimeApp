@@ -1,23 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { verifyAdminSession } from '../../session';
 
 const TMDB_EMBED_API_URL = process.env.TMDB_EMBED_API_URL || 'http://192.168.86.75:8787';
 
-async function verifySession(request: NextRequest): Promise<boolean> {
-  try {
-    const sessionCookie = request.cookies.get('admin_session')?.value;
-    if (!sessionCookie) return false;
-    const res = await fetch(`http://192.168.86.75:${process.env.PORT || 3001}/api/admin/auth`, {
-      headers: { Cookie: `admin_session=${sessionCookie}` },
-    });
-    const data = await res.json();
-    return data.authenticated === true;
-  } catch {
-    return false;
-  }
-}
-
 export async function POST(request: NextRequest) {
-  const authed = await verifySession(request);
+  const authed = await verifyAdminSession(request);
   if (!authed) {
     return NextResponse.json({ success: false, error: 'UNAUTHORIZED' }, { status: 401 });
   }

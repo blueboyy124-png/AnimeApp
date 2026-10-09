@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { execSync, exec } from 'child_process';
 import { promisify } from 'util';
+import { verifyAdminSession } from '../session';
 
 // Admin control endpoint — never static, always runs on the server
 export const dynamic = 'force-dynamic';
@@ -10,20 +11,6 @@ const BACKEND_PATH = '/Users/porterdecker/Anime/MiruroAPI';
 const MOIVEBACKEND_PATH = '/Users/porterdecker/Anime/TMDB-Embed-API';
 const FRONTEND_PATH = '/Users/porterdecker/Anime/my-anime-site';
 const START_SCRIPT = '/Users/porterdecker/start-anime.sh';
-
-async function verifySession(request: NextRequest): Promise<boolean> {
-  try {
-    const sessionCookie = request.cookies.get('admin_session')?.value;
-    if (!sessionCookie) return false;
-    const res = await fetch(`http://192.168.86.75:${process.env.PORT || 3001}/api/admin/auth`, {
-      headers: { Cookie: `admin_session=${sessionCookie}` },
-    });
-    const data = await res.json();
-    return data.authenticated === true;
-  } catch {
-    return false;
-  }
-}
 
 interface ProcessInfo {
   running: boolean;
@@ -77,7 +64,7 @@ function getProcesses(): { all: ProcessInfo; miruro: ProcessInfo; tmdb: ProcessI
 }
 
 export async function GET(request: NextRequest) {
-  const authed = await verifySession(request);
+  const authed = await verifyAdminSession(request);
   if (!authed) {
     return NextResponse.json({ success: false, error: 'UNAUTHORIZED' }, { status: 401 });
   }
@@ -86,7 +73,7 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  const authed = await verifySession(request);
+  const authed = await verifyAdminSession(request);
   if (!authed) {
     return NextResponse.json({ success: false, error: 'UNAUTHORIZED' }, { status: 401 });
   }

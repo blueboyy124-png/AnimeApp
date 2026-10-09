@@ -1,8 +1,18 @@
 import { createClient } from '@supabase/supabase-js';
+import { SUPABASE_ANON_KEY, SUPABASE_URL, warnIfPublicConfigMissing } from './config';
 
-// Fallback to your explicit project string if process env variables are missing during a build worker run
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || "https://itjzuocsxemrhdfiormr.supabase.co";
-const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Iml0anp1b2NzeGVtcmhkZmlvcm1yIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI2NjkzNDYsImV4cCI6MjA5ODI0NTM0Nn0.olmwxwf3QNTVrJrCk2QjJhTEdQHs95EsSNdVdW_8YQs";
+// These used to have literal fallbacks pointing at one specific Supabase
+// project, which meant a build with no env vars silently talked to that
+// project instead of failing. There is no fallback now — the error below is
+// loud and actionable, and `createClient` would throw on empty strings anyway.
+warnIfPublicConfigMissing('supabase');
+
+if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+  throw new Error(
+    '[supabase] NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY must be set. ' +
+      'Copy .env.example to .env.local and fill them in.'
+  );
+}
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 

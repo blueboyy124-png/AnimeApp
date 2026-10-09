@@ -10,7 +10,39 @@ const nextConfig: NextConfig = {
   //   - The Electron dock app already runs `next start` (production server mode)
   trailingSlash: false,   // Stops Electron from breaking on "index.html/" folder routing paths
   images: {
-    unoptimized: true,    // Disables server-side image scaling so images load offline locally
+    // KEPT ON DELIBERATELY — read before flipping.
+    //
+    // With this true, every <Image> renders its src unchanged: no resizing, no
+    // format conversion, no srcset. Turning it off is a genuine bandwidth/LCP
+    // win for the TMDB posters, BUT the optimizer fetches the source image
+    // server-side and Next deliberately forwards NO request headers when it
+    // does (see the `unoptimized` section of the next/image docs). Several of
+    // this app's provider episode thumbnails are hotlink-protected and need a
+    // Referer, so those would start failing through the optimizer.
+    //
+    // So: flip to `false` only after checking watch-page episode thumbnails.
+    // remotePatterns below is already populated for that day.
+    //
+    // While it stays true, the wins that still apply are lazy loading,
+    // layout-shift prevention from explicit sizing, and `priority`-driven
+    // preloading — which is what actually moves the hero image's LCP.
+    unoptimized: true,
+
+    // Only consulted when optimization is on, but declared up front so that
+    // flipping the flag above doesn't instantly break every poster.
+    remotePatterns: [
+      { protocol: "https", hostname: "image.tmdb.org" },
+      { protocol: "https", hostname: "images.unsplash.com" },
+      { protocol: "https", hostname: "placehold.co" },
+      { protocol: "https", hostname: "s4.anilist.co" },
+      { protocol: "https", hostname: "**.supabase.co" }, // profile avatars
+      // The companion anime API serves some artwork directly, and it is
+      // reached over plain HTTP on localhost / the LAN.
+      { protocol: "http", hostname: "localhost" },
+      { protocol: "http", hostname: "127.0.0.1" },
+      { protocol: "http", hostname: "192.168.86.75" },
+      { protocol: "http", hostname: "192.168.86.75" },
+    ],
   },
 
   // The watch page is fully dynamic (episode list, stream resolve, resume

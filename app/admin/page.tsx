@@ -104,6 +104,27 @@ async function apiPost(path: string, body?: any) {
   return res.json();
 }
 
+// Maps the machine-readable error codes returned by /api/admin/auth to
+// something a human can act on. The route returns 429 when rate limited and
+// 503 when ADMIN_USERNAME / ADMIN_PASSWORD are unset or too short — both of
+// which apiPost() would otherwise collapse into a generic "Network error".
+function describeLoginError(error: string | undefined, retryAfterSeconds: number): string {
+  switch (error) {
+    case "INVALID_CREDENTIALS":
+      return "Incorrect username or password.";
+    case "TOO_MANY_ATTEMPTS":
+      return `Too many failed attempts. Try again in ${Math.max(1, Math.ceil(retryAfterSeconds / 60))} minute(s).`;
+    case "ADMIN_NOT_CONFIGURED":
+      return "Admin login is not configured. Set ADMIN_USERNAME and ADMIN_PASSWORD in .env.local, then restart the server.";
+    case "ADMIN_PASSWORD_TOO_SHORT":
+      return "ADMIN_PASSWORD is too short — it must be at least 12 characters.";
+    case "MISSING_CREDENTIALS":
+      return "Enter a username and password.";
+    default:
+      return error || "Login failed";
+  }
+}
+
 // ══════════════════════════════════════════════════════════════
 // LOGIN PAGE
 // ══════════════════════════════════════════════════════════════
@@ -120,13 +141,27 @@ function LoginPage({ onLogin }: { onLogin: () => void }) {
     setStatus("Authenticating...");
     setStatusClass("");
     try {
-      const res = await apiPost("/api/admin/auth", { username: username.trim(), password });
-      if (res.success) {
+      // Deliberately not apiPost(): it throws a generic Error on any non-2xx,
+      // so the 429 (rate limited) and 503 (not configured) responses from
+      // /api/admin/auth would both be reported as "Network error". Login reads
+      // the body itself so it can say what actually went wrong.
+      const res = await fetch("/api/admin/auth", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: username.trim(), password }),
+        credentials: "include",
+        cache: "no-store",
+      });
+
+      const data = await res.json().catch(() => null);
+
+      if (res.ok && data?.success) {
         setStatus("Success! Loading panel...");
         setStatusClass("text-green-400");
         setTimeout(onLogin, 400);
       } else {
-        setStatus(res.error || "Login failed");
+        const retryAfter = Number(res.headers.get("Retry-After")) || 900;
+        setStatus(describeLoginError(data?.error, retryAfter));
         setStatusClass("text-red-400");
       }
     } catch {

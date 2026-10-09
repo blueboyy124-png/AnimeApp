@@ -3,6 +3,8 @@
 import { useState, useEffect, useRef, use } from "react";
 import Link from "next/link";
 import { getApiBaseUrl } from "../../utils/api";
+import { OMDB_API_KEY, TMDB_API_KEY } from "../../utils/config";
+import { DEFAULT_TMDB_PROVIDER } from "../../watch/lib/constants";
 import TopBar from "../../components/TopBar";
 
 interface ScoreSet {
@@ -97,8 +99,7 @@ interface PageProps {
 type ViewStyle = "compact" | "detailed";
 type ResolvedMedia = { tmdbId: string; mediaType: "tv" | "movie" } | null;
 
-const TMDB_API_KEY = "e0554f6521da4365d4a36ea7ff17ae51";
-const OMDB_API_KEY = "68d53c36";
+// TMDB_API_KEY / OMDB_API_KEY are imported from utils/config (env-backed).
 const TMDB_IMG = "https://image.tmdb.org/t/p";
 const fallbackGlobalImage =
   "https://images.unsplash.com/photo-1574375927938-d5a98e8edd86?q=80&w=600&auto=format&fit=crop";
@@ -953,7 +954,9 @@ export default function AnimeDetailPage({ params }: PageProps) {
     const isAnimeOverride = isTmdbMedia && !!resolvedAnilistId;
     const streamId = isAnimeOverride ? resolvedAnilistId : resolvedTmdb ? resolvedTmdb.tmdbId : id;
     let providerName = rawEpisodeId?.includes("watch/") ? rawEpisodeId.split("/")[1] : resolvedProvider || "gogoanime";
-    if (isTmdbMedia && !isAnimeOverride) providerName = "dahmermovies";
+    // TMDB titles open on a provider that can actually play in the browser
+    // (dahmermovies is .mkv-only and sits behind a Cloudflare challenge).
+    if (isTmdbMedia && !isAnimeOverride) providerName = DEFAULT_TMDB_PROVIDER;
     const streamType = isTmdbMedia && !isAnimeOverride ? (isTmdbSeries ? "tv" : "movie") : undefined;
     const streamQuery = new URLSearchParams({
       provider: providerName,

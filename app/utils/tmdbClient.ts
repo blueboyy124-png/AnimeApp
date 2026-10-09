@@ -12,20 +12,18 @@
 //     done" can hand back a half-empty row. This client keeps paging until
 //     it has enough safe items or runs out of pages.
 //
-// SECURITY NOTE: TMDB_API_KEY must come from an env var, never a literal
-// string in this file. Any key baked into client-side source is visible to
-// anyone who opens devtools -> Sources and reads the bundle. For real
+// SECURITY NOTE: the key now comes from utils/config (env-backed) instead of
+// a literal in this file — but NEXT_PUBLIC_* values are still inlined into
+// the browser bundle, so it remains visible in devtools -> Sources. For real
 // protection this call should go through your own backend, which can hide
 // the key entirely and rate-limit per-user instead of trusting the client.
 // ══════════════════════════════════════════════════════════════════════════
 
 import { filterForKids, filterMatureRatings } from "./contentFilter";
 import type { StoryDNA } from "./recommendationEngine";
+import { TMDB_API_KEY, TMDB_BASE } from "./config";
 
-const TMDB_API_KEY = process.env.NEXT_PUBLIC_TMDB_API_KEY || "";
-const TMDB_BASE = "https://api.themoviedb.org/3";
-
-export type MediaType = "movie" | "tv";
+export type MediaType = "movie" | "tv" | "anime";
 
 export interface TmdbItem {
   id: number;
@@ -36,6 +34,9 @@ export interface TmdbItem {
   popularity: number; // raw TMDB popularity (unbounded, roughly 0-3000+)
   averageScore: number; // vote_average * 10, matches recommendationEngine's 0-100 scale
   posterPath?: string | null;
+  poster_path?: string | null; // TMDB raw field, kept so AniList results can be
+                               // rendered by AnimeCard-aware helpers directly
+  coverImage?: string | { extraLarge?: string; large?: string; medium?: string } | null;
   isAdult?: boolean;
   fromRecommendations?: boolean; // true if sourced from /recommendations or /similar
   releaseYear: number | null; // null when TMDB has no date on file

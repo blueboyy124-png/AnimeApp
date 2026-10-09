@@ -28,18 +28,29 @@ async function anilistQuery(query: string, variables: Record<string, any>): Prom
 }
 
 function normalizeAniListMedia(m: any, fromRecommendations = false): TmdbItem {
+  const largeCover = m.coverImage?.large || null;
+  const extraLargeCover = m.coverImage?.extraLarge || m.coverImage?.large || null;
   return {
     id: m.id,
-    // Reuses the TmdbItem shape (media_type is typed as "movie" | "tv" there)
-    // — cast to keep this file decoupled from tmdbClient's type union so
-    // adding a new media type doesn't require editing tmdbClient.ts.
-    media_type: "tv" as any,
+    // AniList media is anime, NOT TMDB "tv" — routing (getDetailsHref in
+    // cardHelpers.tsx) keys off media_type, and a "tv" tag here would send an
+    // anime card down the /anime/tmdb-tv-${id} route (the TMDB detail page)
+    // instead of the native /anime/{anilistId} page that actually streams it.
+    // That mismatch is what made One Piece cards unplayable from the feed.
+    media_type: "anime" as any,
     title: m.title?.english || m.title?.romaji || "Untitled",
     overview: m.description?.replace(/<[^>]+>/g, ""), // strip AniList's inline HTML
     genres: (m.genres || []).map((g: string) => g.toLowerCase()),
     popularity: m.popularity || 0,
     averageScore: m.averageScore || 0, // already 0-100
-    posterPath: m.coverImage?.large || null,
+    posterPath: largeCover,
+    // AnimeCard-compatible surface too — the home/feed card components
+    // (getDisplayCover, getDisplayTitle, isTmdbResult) read poster_path and a
+    // structured coverImage object, not posterPath. Mirroring both keeps
+    // anime flowing through the same rendering pipeline as TMDB cards without
+    // every card helper needing an anime branch.
+    poster_path: largeCover,
+    coverImage: extraLargeCover ? { extraLarge: extraLargeCover, large: largeCover } : undefined,
     isAdult: !!m.isAdult,
     fromRecommendations,
     releaseYear: m.startDate?.year ?? null,

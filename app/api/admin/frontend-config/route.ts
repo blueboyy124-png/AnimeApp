@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import fs from "fs/promises";
 import path from "path";
+import { verifyAdminSession } from "../session";
 
 const CONFIG_PATH = path.join(process.cwd(), "data", "frontend-config.json");
 
@@ -42,24 +43,8 @@ async function writeBanner(banner: StoredBanner): Promise<void> {
   await fs.writeFile(CONFIG_PATH, JSON.stringify(banner, null, 2), "utf-8");
 }
 
-// Same session-verification pattern used by the other /api/admin/* routes.
-// Validates the session by calling back to the auth endpoint.
-async function verifySession(request: NextRequest): Promise<boolean> {
-  const sessionCookie = request.cookies.get('admin_session')?.value;
-  if (!sessionCookie) return false;
-  try {
-    const res = await fetch(`http://192.168.86.75:${process.env.PORT || 3001}/api/admin/auth`, {
-      headers: { Cookie: `admin_session=${sessionCookie}` },
-    });
-    const data = await res.json();
-    return data.authenticated === true;
-  } catch {
-    return false;
-  }
-}
-
 export async function GET(req: NextRequest) {
-  if (!(await verifySession(req))) {
+  if (!(await verifyAdminSession(req))) {
     return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
   }
   const banner = await readBanner();
@@ -67,7 +52,7 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  if (!(await verifySession(req))) {
+  if (!(await verifyAdminSession(req))) {
     return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
   }
 

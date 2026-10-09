@@ -32,6 +32,9 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+# ...but the template is safe to commit: it documents required variable names
+# and contains no values. Without this negation `.env*` would hide it too.
+!.env.example
 
 # vercel
 .vercel

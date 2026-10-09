@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { TMDB_API_KEY } from "./config";
 
 // Filters mature-tagged items out of a feed/search result list when the
 // active profile is a kids profile. Checks the common shapes the AniList
@@ -34,13 +35,11 @@ export function filterForKids<T extends { genres?: string[]; isAdult?: boolean }
 // excluded rather than assumed fine — the failure mode here should always
 // be "hidden from kids" rather than "possibly shown to kids".
 
-// SECURITY: this used to be a hardcoded literal. Any key baked directly into
-// this file ships to the browser in plaintext — anyone can read it out of
-// devtools -> Sources and use it under your TMDB quota. Set
-// NEXT_PUBLIC_TMDB_API_KEY in your env instead. For real protection this
-// call should eventually move behind your own backend so the key never
-// reaches the client at all.
-const TMDB_API_KEY = process.env.NEXT_PUBLIC_TMDB_API_KEY || "";
+// The key is env-backed and centralised in utils/config.ts. Note that
+// NEXT_PUBLIC_* values are inlined into the client bundle at build time, so
+// it is still readable in devtools -> Sources; see utils/config.ts for the
+// follow-up (a server-side TMDB proxy route) that would take it off the
+// client entirely.
 
 const KIDS_SAFE_MOVIE_RATINGS = new Set(["G", "PG"]);
 const KIDS_SAFE_TV_RATINGS = new Set(["TV-Y", "TV-Y7", "TV-Y7-FV", "TV-G", "TV-PG"]);

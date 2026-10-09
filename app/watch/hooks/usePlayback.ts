@@ -131,29 +131,16 @@ export function usePlayback({
     triggerControlsActivity();
   }, [videoRef, triggerControlsActivity]);
 
-  const applyCaptionMode = useCallback(async (enabled: boolean) => {
-  setCaptionsEnabled(enabled);
-  if (!videoRef.current) return;
-
-  // 1. First, do your original job of showing/hiding normal tracks
-  const tracks = videoRef.current.textTracks;
-  for (let i = 0; i < tracks.length; i += 1) {
-    tracks[i].mode = enabled ? "showing" : "hidden";
-  }
-
-  // 2. NEW: If there are no built-in tracks, turn on the AI listener instead!
-  if (tracks.length === 0 && enabled) {
-    // Dynamically load the AI tool
-    const Moonshine = await import("https://jsdelivr.net");
-    
-    // Set up the AI to listen to your videoRef
-    const videoCaptioner = new Moonshine.VideoCaptioner(videoRef.current, "model/tiny", false);
-    
-    // Start generating captions instantly!
-    videoCaptioner.start();
-  }
-}, [videoRef]);
-
+  // Built-in subtitle tracks only: shows and hides whatever tracks the stream
+  // itself shipped. Streams that ship none simply stay caption-free.
+  const applyCaptionMode = useCallback((enabled: boolean) => {
+    setCaptionsEnabled(enabled);
+    if (!videoRef.current) return;
+    const tracks = videoRef.current.textTracks;
+    for (let i = 0; i < tracks.length; i += 1) {
+      tracks[i].mode = enabled ? "showing" : "hidden";
+    }
+  }, [videoRef]);
 
   const ensureAudioGraph = useCallback(() => {
     if (audioContextRef.current || !videoRef.current) return;

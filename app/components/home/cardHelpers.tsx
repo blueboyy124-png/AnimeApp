@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { memo, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { AnimeCard, CardInteractionHandlers } from "./types";
 
@@ -224,12 +225,20 @@ function AnimeCardTileComponent({ anime, variant = "row", onHoverStart, onHoverE
     >
       <div className="relative origin-center transition-all duration-300 ease-[cubic-bezier(0.4,0,0.2,1)] group-hover:scale-105 2xl:group-hover:scale-[1.08] group-hover:z-30 group-focus-within:scale-105 group-focus-within:z-30">
         <div className="relative aspect-video w-full overflow-hidden rounded-[10px] bg-[#12151b] shadow-md ring-1 ring-white/5 border border-white/10 transition-all duration-300 group-hover:shadow-2xl group-hover:shadow-black/70 group-hover:border-white/20 group-hover:ring-orange-500/15">
-          <img
+          <Image
             src={getDisplayCover(anime)}
             alt={getDisplayTitle(anime)}
-            className="w-full h-full object-cover object-center transition-transform duration-500 ease-out group-hover:scale-110"
-            loading="lazy"
-            decoding="async"
+            fill
+            // The card is a percentage of the shelf width (w-[42%] down to
+            // w-[19.2%] across breakpoints), so the browser cannot infer the
+            // rendered size from the layout. Declaring it is what lets the
+            // optimizer pick an appropriate variant if images.unoptimized is
+            // ever turned off — and costs nothing while it stays on.
+            sizes="(max-width: 640px) 42vw, (max-width: 1024px) 24vw, 20vw"
+            // `fill` supplies position/inset/width/height and next/image
+            // lazy-loads with decoding="async" by default, so the old
+            // w-full h-full + loading + decoding attributes are gone.
+            className="object-cover object-center transition-transform duration-500 ease-out group-hover:scale-110"
             draggable={false}
           />
 
@@ -254,7 +263,7 @@ function AnimeCardTileComponent({ anime, variant = "row", onHoverStart, onHoverE
 
           <div className="absolute inset-0 flex items-center justify-center gap-2.5 opacity-0 scale-90 group-hover:opacity-100 group-hover:scale-100 group-focus-within:opacity-100 group-focus-within:scale-100 transition-all duration-300">
             <span className="bg-[#f2f0ec] text-black rounded-full w-9 h-9 flex items-center justify-center hover:bg-white hover:scale-110 transition-all duration-300 shadow-lg">
-              <img src="/Assets/play-button.png" alt="Play" className="w-3.5 h-3.5 object-contain" />
+              <Image src="/Assets/play-button.png" alt="Play" width={14} height={14} className="object-contain" />
             </span>
             <span className="border border-white/45 text-[#f2f0ec] rounded-full w-9 h-9 flex items-center justify-center text-sm font-bold hover:border-white hover:scale-110 transition-all duration-300 bg-black/40">
               i

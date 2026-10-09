@@ -1,6 +1,10 @@
 "use client";
 
 import Link from "next/link";
+// Aliased on purpose: line ~64 of this file uses the DOM's `Image()` constructor
+// to warm the cache for upcoming slides. Importing next/image as `Image` would
+// shadow that global and silently turn the prefetch into a no-op.
+import NextImage from "next/image";
 import { useEffect, useRef, type TouchEvent as ReactTouchEvent } from "react";
 import { AnimeCard } from "./types";
 import { getDisplayTitle, getDetailsHref, cleanDescription } from "./cardHelpers";
@@ -129,21 +133,30 @@ export function HeroSlider({ loading, items, activeIndex, onDotClick, onPauseCha
             (items.length > 2 && index === (safeIndex + items.length - 1) % items.length);
           return (
             <div key={`${show.media_type || "x"}-${show.id}`} className="relative w-full h-full flex-shrink-0 overflow-hidden">
-              <img
+              <NextImage
                 src={
                   getHeroImageSrc(show) ||
                   "https://images.unsplash.com/photo-1574375927938-d5a98e8edd86?q=80&w=1600&auto=format&fit=crop"
                 }
                 alt="Spotlight Artwork"
+                fill
+                sizes="100vw"
+                // `priority` on the active slide emits a <link rel="preload">
+                // for the hero artwork, so its fetch starts while the HTML is
+                // still being parsed instead of waiting for hydration. That is
+                // the part of this change that actually moves LCP.
+                priority={index === safeIndex}
+                // Neighbours stay eager (matching the prefetch effect above) so
+                // sliding onto them never shows a blank frame; everything
+                // further out stays lazy. Left undefined for the active slide
+                // so `priority` fully controls it.
+                loading={index === safeIndex ? undefined : isNear ? "eager" : "lazy"}
                 // Shifted down from the original center_30% — keeps more of
                 // the image's own "floor" in frame so the gradient below has
                 // less busy detail to fight against and the artwork reads as
                 // a quiet backdrop rather than the main event.
-                className="absolute inset-0 w-full h-full object-cover object-[center_42%]"
-                loading={isNear ? "eager" : "lazy"}
-                decoding="async"
+                className="object-cover object-[center_42%]"
                 draggable={false}
-                fetchPriority={index === safeIndex ? "high" : isNear ? "low" : undefined}
               />
               {/* Full-height cinematic fade: the artwork stays legible while
                   the bottom edge dissolves continuously into the page canvas. */}

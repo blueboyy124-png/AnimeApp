@@ -17,9 +17,14 @@
 // CLIENT-SAFE: uses only fetch + guarded localStorage, no node APIs.
 // ════════════════════════════════════════════════════════════════════════════
 
-export const TMDB_API_KEY =
-  process.env.NEXT_PUBLIC_TMDB_API_KEY || "e0554f6521da4365d4a36ea7ff17ae51";
-export const TMDB_IMG = "https://image.tmdb.org/t/p";
+// Sourced from the shared config module (env-backed) and re-exported so the
+// existing importers — useExternalMetadata, useTmdbEnrichment, the detail
+// page — keep working unchanged. There is no literal fallback any more: a
+// missing key now surfaces as a clear warning instead of silently using a
+// developer's personal key.
+import { TMDB_API_KEY, TMDB_IMG } from "./config";
+export { TMDB_API_KEY, TMDB_IMG };
+
 const TMDB_BASE = "https://api.themoviedb.org/3";
 
 export async function tmdbFetch(path: string): Promise<{ ok: boolean; data: any }> {

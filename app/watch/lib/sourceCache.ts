@@ -106,6 +106,3 @@ export function markSourceHealthy(sourceUrl: string): void {
     if (mark(persistent)) savePersistentSourceCache(persistent);
   } catch {}
 }
-
-export function getCachedSource(..._args: any[]): any { return null; }
-export function cacheSource(..._args: any[]): void {}

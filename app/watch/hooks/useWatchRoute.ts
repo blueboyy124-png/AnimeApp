@@ -2,6 +2,7 @@ import { useEffect, useCallback } from "react";
 import { useSearchParams, useRouter, usePathname } from "next/navigation";
 import { loadSourceCache, saveSourceCache } from "../lib/sourceCache";
 import { getResumeTimeKey } from "../lib/history";
+import { DEFAULT_TMDB_PROVIDER } from "../lib/constants";
 
 export function useWatchRoute() {
   const searchParams = useSearchParams();
@@ -36,7 +37,10 @@ export function useWatchRoute() {
     (isExternalMedia && !/^tt/i.test(currentSlug) && mediaType !== "series" && mediaType !== "tv" && !/^tmdb-tv-/i.test(anilistId));
 
   const activeCategory = category ?? "sub";
-  const provider = urlProvider ?? (isExternalMedia ? "dahmermovies" : "kiwi");
+  // Movie/TV titles default to a provider that can actually feed an HTML5 player
+  // (see PREFERRED_TMDB_PROVIDERS in lib/constants.ts) instead of dahmermovies,
+  // whose .mkv-only, Cloudflare-gated catalogue can never play in a browser.
+  const provider = urlProvider ?? (isExternalMedia ? DEFAULT_TMDB_PROVIDER : "kiwi");
 
   const mediaIdentity = `${isExternalMedia ? "external" : "anime"}:${mediaType}:${anilistId}`;
   const routeIdentity = `${mediaIdentity}:${seasonNum}:${epNum}:${provider}:${activeCategory}:${currentSlug}`;
@@ -61,7 +65,7 @@ export function useWatchRoute() {
 
       if (!urlProvider) {
         if (isExternalMedia) {
-          nextParams.set("provider", "dahmermovies");
+          nextParams.set("provider", DEFAULT_TMDB_PROVIDER);
           parametersChanged = true;
         } else if (savedProv) {
           nextParams.set("provider", savedProv);

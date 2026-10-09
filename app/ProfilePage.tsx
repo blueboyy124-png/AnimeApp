@@ -13,6 +13,7 @@ import {
 import { AnimeCard } from "./components/home/types";
 import { getDisplayCover, getDisplayTitle } from "./components/home/cardHelpers";
 import { filterForKids, useKidsSafeList } from "./utils/contentFilter";
+import { TMDB_API_KEY } from "./utils/config";
 
 // ══════════════════════════════════════════════════════════════
 // PROFILE-PAGE SPOTLIGHT BACKDROP
@@ -25,7 +26,9 @@ import { filterForKids, useKidsSafeList } from "./utils/contentFilter";
 // history to personalize from, which the profile-select screen has no
 // concept of yet.
 // ══════════════════════════════════════════════════════════════
-const HERO_TMDB_API_KEY = "e0554f6521da4365d4a36ea7ff17ae51";
+// TMDB key lives in utils/config (env-backed). Aliased to a hero-specific name
+// to sit alongside the other HERO_* tuning constants below.
+const HERO_TMDB_API_KEY = TMDB_API_KEY;
 const HERO_MIN_VOTE_AVERAGE = 6.5;
 const HERO_MIN_VOTE_COUNT = 50;
 const HERO_SLIDE_COUNT = 5;

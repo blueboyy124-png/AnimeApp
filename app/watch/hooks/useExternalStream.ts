@@ -5,6 +5,7 @@ import {
   STREAM_LOAD_TIMEOUT_MS,
   STREAM_LOAD_TIMEOUT_EXTENDED_MS,
   PERSISTENT_SOURCE_CACHE_TTL_MS,
+  PREFERRED_TMDB_PROVIDERS,
 } from "../lib/constants";
 import {
   isAppleMobileDevice,
@@ -180,9 +181,10 @@ export function useExternalStream({
         const providerPref = loadProviderPref();
         const savedTypePref = providerPref[mediaTypeKey];
         const healthyEnabledProviders = enabledProviders.filter((name) => !isProviderSuppressed(name));
-        const externalFallback = healthyEnabledProviders.includes("dahmermovies")
-          ? "dahmermovies"
-          : healthyEnabledProviders[0] || enabledProviders[0] || "";
+        // Pick the best available provider in preference order instead of pinning
+        // dahmermovies (which can never play in a browser — see constants.ts).
+        const preferredAvailable = PREFERRED_TMDB_PROVIDERS.filter((name) => healthyEnabledProviders.includes(name));
+        const externalFallback = preferredAvailable[0] || healthyEnabledProviders[0] || enabledProviders[0] || "";
 
         const selectedProvider = provider && enabledProviders.includes(provider)
           ? provider
@@ -271,8 +273,24 @@ export function useExternalStream({
           for (const s of streamsArray) {
             if (s && typeof s.url === 'string') {
               let cleanUrl = s.url.trim();
-              const urlNoQuery = cleanUrl.split('?')[0].toLowerCase();
-              if (urlNoQuery.endsWith('.mkv')) continue;
+
+              // The API tags every stream with container/playableInBrowser. Two
+              // separate guards matter here:
+              //  - Matroska (.mkv) is a hard skip: no HTML5 <video> can decode it,
+              //    and with the proxy layer active the URL no longer *ends* in
+              //    ".mkv" (`.../ts-proxy?url=....mkv`), so the old extension check
+              //    silently let guaranteed-black-screen links through.
+              //  - Anything else the API flags as not browser-playable is kept but
+              //    heavily deprioritised, so it is still a last-resort fallback.
+              const container = String((s as { container?: string }).container || '').toLowerCase();
+              const unwrapped = (() => {
+                try {
+                  const parsed = new URL(cleanUrl, 'http://localhost');
+                  return parsed.searchParams.get('url') || cleanUrl;
+                } catch { return cleanUrl; }
+              })();
+              const unwrappedNoQuery = unwrapped.split('?')[0].toLowerCase();
+              if (container === 'mkv' || unwrappedNoQuery.endsWith('.mkv')) continue;
 
               if (cleanUrl.startsWith('//')) {
                 cleanUrl = 'https:' + cleanUrl;
@@ -280,10 +298,12 @@ export function useExternalStream({
                 cleanUrl = 'https://showbox.media' + cleanUrl;
               }
 
+              const playabilityPenalty = (s as { playableInBrowser?: boolean }).playableInBrowser === false ? 100000 : 0;
+
               scoredStreams.push({ 
                 url: cleanUrl, 
                 name: String(s.name || s.title || s.provider || "Provider Source"), 
-                score: getQualityScore(s)
+                score: getQualityScore(s) - playabilityPenalty
               });
             }
           }

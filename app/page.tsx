@@ -4,6 +4,7 @@ import { useState, useEffect, useRef, useMemo, useCallback, ChangeEvent } from "
 import ProfileGate, { useProfile } from "./profilegate";
 import TopBar from "./components/TopBar";
 import { getApiBaseUrl } from "./utils/api";
+import { TMDB_API_KEY } from "./utils/config";
 import { supabase } from "./utils/supabase";
 import { filterForKids, useKidsSafeList, filterMatureRatings } from "./utils/contentFilter";
 import {
@@ -24,6 +25,10 @@ import {
 } from "./utils/recommendationEngine";
 import { AnimeCard, WatchHistoryItem, FeedCategory, SeededRecommendationRow } from "./components/home/types";
 import { isTmdbResult, ShowcaseSkeleton } from "./components/home/cardHelpers";
+import {
+  fetchTrendingAnimeSafe,
+  fetchPopularAnimeSafe,
+} from "./utils/anilistClient";
 import { HeroSlider } from "./components/home/HeroSlider";
 import { WatchHistory } from "./components/home/WatchHistory";
 import { RecommendationRow } from "./components/home/RecommendationRow";
@@ -584,7 +589,6 @@ function HomePageContent() {
   const searchRequestIdRef = useRef(0);
 
   const API_BASE = getApiBaseUrl();
-  const TMDB_API_KEY = "e0554f6521da4365d4a36ea7ff17ae51";
   const RESULTS_PER_PAGE = 20;
 
   useEffect(() => {
@@ -646,11 +650,11 @@ function HomePageContent() {
       setLoading(true);
     }
 
-    // Trending/Popular/Upcoming and Recommendations are all TMDB-driven now
-    // — this is a movies/TV site that also has anime, not the other way
-    // around. Anime only ever appears in Recommendations, and only once
-    // animeRecs has something to show (which itself only happens once the
-    // person has actual anime watch history) — see picksForYouFeed below.
+        // Trending / Popular / Upcoming come from TMDB; anime comes from AniList
+    // (TMDB has no equivalent). The two pools are fused here so the feed is
+    // genuinely mixed — previously the refactor dropped the AniList fetch
+    // entirely, which is why titles like One Piece vanished from the feed
+    // even though the backend/API still serve them fine.
     async function loadTmdbCategory() {
       let results: AnimeCard[] = [];
 
@@ -664,6 +668,24 @@ function HomePageContent() {
         // Other tabs also get 3 pages for a deeper feed.
         results = await fetchTmdbCategoryPages(TMDB_API_KEY, activeCategory as "trending" | "popular" | "upcoming", 3);
       }
+
+            // Fuse in AniList anime: trending on the trending/upcoming tabs,
+      // popular on the popular/recommendations tabs. isKids is derived from
+      // the active profile — pass false when there's no profile, in which
+      // case TMDB's own safety filters still apply to the movie/TV half.
+      const isKidsProfile = currentProfile?.is_kids === true;
+      const animeResults =
+        activeCategory === "popular" || activeCategory === "recommendations"
+          ? await fetchPopularAnimeSafe(isKidsProfile, 20)
+          : await fetchTrendingAnimeSafe(isKidsProfile, 20);
+
+      // Interleave anime into the TMDB results so the grid reads as a real
+      // mixed shelf instead of "all movies, then all anime". Dedupe on the
+      // AniList id — One Piece only gets one card, and it keeps the anime
+      // route (isTmdbResult === false) so the click lands on /anime/{id}
+      // rather than the TMDB detail page.
+      const fused = mergeSearchResults(animeResults as AnimeCard[], results);
+      results = fused;
 
       // A newer tab switch or profile change already superseded this
       // request — drop the result instead of clobbering fresher state.

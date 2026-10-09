@@ -11,8 +11,11 @@ export const MAX_VOLUME = 1.5; // volume slider ceiling — 1.0 is "true" full v
 // them. TMDB is used purely to dress up the episode/season browsing UI (real
 // thumbnails, synopses, season groupings) for well-known titles like One Piece,
 // mirroring what the /anime/[id] detail page already does.
-export const TMDB_API_KEY = "e0554f6521da4365d4a36ea7ff17ae51";
-export const TMDB_IMG = "https://image.tmdb.org/t/p";
+// Re-exported so the watch pipeline keeps a single import site for these
+// while the values themselves come from env via the shared config module.
+// The literal TMDB key that used to live here is gone — it was committed to
+// git and baked into the packaged Electron build.
+export { TMDB_API_KEY, TMDB_IMG } from "../../utils/config";
 
 // AniList IDs whose TMDB metadata enrichment is deliberately disabled. One Piece
 // (21) lists specials/OVAs as separate TMDB seasons, so cumulative season offsets
@@ -45,9 +48,37 @@ export const PERSISTENT_SOURCE_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 // ---- Provider preferences & health -----------------------------------------------
 export const PROVIDER_PREF_KEY = "streamanime_provider_pref_v1";
 export const PROVIDER_HEALTH_KEY = "streamanime_provider_health_v1";
+
+// Browser-playback provider order for TMDB movie/TV titles, best first. Measured
+// against a live title (TMDB 550): each of the leading entries answered in ~1-3s
+// AND returned HLS/mp4 that an HTML5 <video> can actually decode.
+//
+// `dahmermovies` is deliberately LAST. Every file it lists is Matroska
+// (.mkv/x265 HEVC), which no browser can play, and its only delivery host
+// (p.111477.xyz/bulk) sits behind a Cloudflare Turnstile challenge that returns
+// 403 to every non-browser client — verified with curl, with full Chrome headers,
+// and with a real headless Chromium. Keep it enabled for the download path only,
+// never as the default playback provider.
+export const DEFAULT_TMDB_PROVIDER = "castletv";
+export const PREFERRED_TMDB_PROVIDERS = [
+  DEFAULT_TMDB_PROVIDER,
+  "vaplayer",
+  "vixsrc",
+  "netmirror",
+  "showbox",
+  "4khdhub",
+  "vidlink",
+  "streamflix",
+  "zxcstreams",
+  "videasy",
+  "hdghartv",
+  "onetouchtv",
+  "dahmermovies",
+];
+
 export const DEFAULT_PROVIDER_PREF: Record<string, string> = {
-  tv: "dahmermovies",
-  movie: "dahmermovies",
+  tv: DEFAULT_TMDB_PROVIDER,
+  movie: DEFAULT_TMDB_PROVIDER,
   anime: "",
 };
 export const PROVIDER_SUPPRESSION_MS = 30 * 1000; // 30 seconds
